@@ -1,0 +1,2475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NURA 2025 — Mission Control</title>
+
+<!-- IBM Plex Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+<style>
+/* ─────────────── IBM Carbon Design Tokens ─────────────── */
+:root {
+  /* Background */
+  --cds-background:         #161616;
+  --cds-background-hover:   #1f1f1f;
+  --cds-background-active:  #262626;
+  /* Layer */
+  --cds-layer-01:           #262626;
+  --cds-layer-02:           #393939;
+  --cds-layer-03:           #525252;
+  --cds-layer-hover:        #333333;
+  --cds-layer-selected:     #393939;
+  /* Field */
+  --cds-field-01:           #393939;
+  --cds-field-02:           #525252;
+  /* Border */
+  --cds-border-subtle-00:   #393939;
+  --cds-border-subtle-01:   #474747;
+  --cds-border-strong:      #8d8d8d;
+  --cds-border-interactive: #0f62fe;
+  /* Text */
+  --cds-text-primary:       #f4f4f4;
+  --cds-text-secondary:     #c6c6c6;
+  --cds-text-placeholder:   #6f6f6f;
+  --cds-text-helper:        #8d8d8d;
+  --cds-text-on-color:      #ffffff;
+  --cds-text-disabled:      #525252;
+  /* Interactive */
+  --cds-interactive:        #0f62fe;
+  --cds-interactive-hover:  #0353e9;
+  --cds-interactive-active: #002d9c;
+  --cds-focus:              #0f62fe;
+  /* Support */
+  --cds-support-error:      #fa4d56;
+  --cds-support-warning:    #f1c21b;
+  --cds-support-success:    #24a148;
+  --cds-support-info:       #0043ce;
+  /* Notification */
+  --cds-notification-bg:    #1c3a6e;
+  /* Icon */
+  --cds-icon-primary:       #f4f4f4;
+  --cds-icon-secondary:     #c6c6c6;
+  --cds-icon-interactive:   #ffffff;
+  /* Font */
+  --cds-font-sans:  'IBM Plex Sans', sans-serif;
+  --cds-font-mono:  'IBM Plex Mono', monospace;
+  /* Spacing (IBM 4px base) */
+  --cds-spacing-01: 2px;
+  --cds-spacing-02: 4px;
+  --cds-spacing-03: 8px;
+  --cds-spacing-04: 12px;
+  --cds-spacing-05: 16px;
+  --cds-spacing-06: 24px;
+  --cds-spacing-07: 32px;
+  --cds-spacing-08: 40px;
+  --cds-spacing-09: 48px;
+  /* Misc */
+  --cds-overlay:    rgba(0,0,0,0.65);
+  --cds-toggle-off: #6f6f6f;
+}
+
+/* ─────────────── Reset ─────────────── */
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html, body { width:100%; height:100%; overflow:hidden; }
+body {
+  font-family: var(--cds-font-sans);
+  background: var(--cds-background);
+  color: var(--cds-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ─────────────── Carbon UI Shell Header ─────────────── */
+.cds--header {
+  position: fixed; top:0; left:0; right:0; z-index:9000;
+  height: 48px;
+  background: #161616;
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; align-items: center;
+  padding: 0 var(--cds-spacing-05);
+  gap: var(--cds-spacing-05);
+}
+.cds--header__name {
+  font-size: 14px; font-weight: 600; color: var(--cds-text-primary);
+  text-decoration: none; letter-spacing: 0.01em;
+  display: flex; align-items: center; gap: var(--cds-spacing-03);
+}
+.cds--header__name .prefix {
+  font-weight: 300; color: var(--cds-text-secondary);
+}
+.header-divider {
+  width: 1px; height: 16px; background: var(--cds-border-subtle-01);
+  margin: 0 var(--cds-spacing-03);
+}
+.header-actions {
+  margin-left: auto;
+  display: flex; align-items: center; gap: var(--cds-spacing-03);
+}
+
+/* ─────────────── Carbon Tag ─────────────── */
+.cds--tag {
+  display: inline-flex; align-items: center;
+  height: 24px; padding: 0 var(--cds-spacing-03);
+  font-family: var(--cds-font-sans);
+  font-size: 12px; font-weight: 400;
+  border-radius: 24px;
+  white-space: nowrap;
+}
+.cds--tag--blue      { background: #0043ce; color: #fff; }
+.cds--tag--green     { background: #198038; color: #fff; }
+.cds--tag--red       { background: #750e13; color: #fa4d56; border: 1px solid #fa4d56; }
+.cds--tag--gray      { background: #393939; color: var(--cds-text-secondary); }
+.cds--tag--purple    { background: #491d8b; color: #be95ff; }
+.cds--tag--yellow    { background: #633800; color: var(--cds-support-warning); }
+.cds--tag--live {
+  background: var(--cds-support-success);
+  color: #fff;
+  animation: pulse-tag 1.5s ease infinite;
+}
+@keyframes pulse-tag {
+  0%,100% { opacity:1; }
+  50% { opacity:0.6; }
+}
+
+/* ─────────────── Carbon Button ─────────────── */
+.cds--btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--cds-spacing-03);
+  height: 40px; padding: 0 var(--cds-spacing-05);
+  font-family: var(--cds-font-sans); font-size: 14px; font-weight: 400;
+  border: none; cursor: pointer;
+  transition: background 70ms cubic-bezier(.2,0,.38,.9);
+  white-space: nowrap;
+}
+.cds--btn--primary   { background: var(--cds-interactive); color: #fff; }
+.cds--btn--primary:hover { background: var(--cds-interactive-hover); }
+.cds--btn--danger    { background: var(--cds-support-error); color: #fff; }
+.cds--btn--danger:hover { background: #b81922; }
+.cds--btn--secondary { background: var(--cds-layer-02); color: var(--cds-text-primary); }
+.cds--btn--secondary:hover { background: var(--cds-layer-03); }
+.cds--btn--ghost     { background: transparent; color: var(--cds-text-primary); border: 1px solid var(--cds-border-subtle-01); }
+.cds--btn--ghost:hover { background: var(--cds-layer-hover); }
+.cds--btn--sm { height: 32px; font-size: 12px; padding: 0 var(--cds-spacing-04); }
+
+/* ─────────────── Carbon Text Input ─────────────── */
+.cds--text-input-wrapper {
+  display: flex; flex-direction: column; flex: 1;
+}
+.cds--text-input {
+  width: 100%; height: 40px;
+  background: var(--cds-field-01);
+  border: none; border-bottom: 1px solid var(--cds-border-strong);
+  color: var(--cds-text-primary);
+  font-family: var(--cds-font-mono); font-size: 12px;
+  padding: 0 var(--cds-spacing-05);
+  outline: none;
+}
+.cds--text-input:focus { border-bottom-color: var(--cds-focus); outline: 2px solid var(--cds-focus); outline-offset: -2px; }
+
+/* ─────────────── Main Layout ─────────────── */
+#root {
+  margin-top: 48px;
+  height: calc(100vh - 48px);
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+}
+
+/* Toolbar */
+.toolbar {
+  background: var(--cds-layer-01);
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; align-items: center; gap: 1px;
+  padding: 0;
+  overflow: hidden;
+}
+.toolbar .cds--text-input { border-bottom: none; border-right: 1px solid var(--cds-border-subtle-00); }
+
+/* Content Grid */
+.content-grid {
+  display: grid;
+  grid-template-columns: 420px 1fr 320px;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* ─────────────── Left Panel ─────────────── */
+.panel-left {
+  border-right: 1px solid var(--cds-border-subtle-00);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--cds-background);
+}
+.panel-left::-webkit-scrollbar { width:4px; }
+.panel-left::-webkit-scrollbar-track { background: transparent; }
+.panel-left::-webkit-scrollbar-thumb { background: var(--cds-border-subtle-00); }
+
+/* Carbon Section Header */
+.section-header {
+  height: 40px; min-height: 40px;
+  background: var(--cds-layer-01);
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; align-items: center;
+  padding: 0 var(--cds-spacing-05);
+  font-size: 11px; font-weight: 600;
+  color: var(--cds-text-helper);
+  text-transform: uppercase; letter-spacing: 0.8px;
+  gap: var(--cds-spacing-03);
+}
+
+/* Carbon Data Table style tiles */
+.metric-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--cds-border-subtle-00);
+}
+.metric-cell {
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+  border-right: 1px solid var(--cds-border-subtle-00);
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  position: relative;
+  transition: background 70ms;
+}
+.metric-cell:nth-child(even) { border-right: none; }
+.metric-cell.highlight { background: var(--cds-layer-01); }
+.metric-cell.highlight::before {
+  content: ''; position: absolute; left:0; top:0; bottom:0; width:3px;
+  background: var(--cds-interactive);
+}
+.metric-label {
+  font-size: 10px; font-weight: 600; color: var(--cds-text-helper);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+}
+.metric-value {
+  font-family: var(--cds-font-mono); font-size: 20px; font-weight: 400;
+  color: var(--cds-text-primary); line-height: 1;
+}
+.metric-unit {
+  font-family: var(--cds-font-mono); font-size: 11px;
+  color: var(--cds-text-helper); margin-left: 4px;
+}
+
+/* Rocket Canvas Area */
+.rocket-viz {
+  background: #000;
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: block;
+  height: 520px; min-height: 520px; position: relative;
+  overflow: hidden;
+}
+.rocket-viz canvas {
+  display: block;
+  position: absolute; inset: 0;
+  width: 100% !important; height: 100% !important;
+}
+.rocket-viz .crosshair-h, .rocket-viz .crosshair-v {
+  position: absolute; background: rgba(15,98,254,0.15);
+  pointer-events: none;
+}
+.rocket-viz .crosshair-h { width:100%; height:1px; top:50%; }
+.rocket-viz .crosshair-v { height:100%; width:1px; left:50%; }
+
+/* Recovery Card - Carbon Notification style */
+.recovery-notification {
+  margin: var(--cds-spacing-05);
+  background: #1c3a6e;
+  border-left: 4px solid var(--cds-support-warning);
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+}
+.recovery-notification .notif-title {
+  font-size: 12px; font-weight: 600;
+  color: var(--cds-support-warning);
+  display: flex; align-items: center; gap: var(--cds-spacing-02);
+  margin-bottom: var(--cds-spacing-03);
+}
+.recovery-notification .coord-row {
+  font-family: var(--cds-font-mono); font-size: 13px;
+  color: var(--cds-text-primary); line-height: 1.8;
+}
+.recovery-notification .coord-label {
+  font-size: 10px; color: var(--cds-text-helper); text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Phase Indicator */
+.flight-phase {
+  margin: 0 var(--cds-spacing-05) var(--cds-spacing-05);
+}
+.phase-bar {
+  display: flex; height: 4px; gap: 2px; margin-top: var(--cds-spacing-03);
+}
+.phase-seg {
+  flex: 1; background: var(--cds-layer-02); border-radius: 1px;
+  transition: background 300ms;
+}
+.phase-seg.active-phase { background: var(--cds-interactive); }
+.phase-seg.done-phase   { background: var(--cds-support-success); }
+.phase-labels {
+  display: flex; gap: 2px; margin-top: var(--cds-spacing-02);
+}
+.phase-lbl {
+  flex:1; font-size:9px; color: var(--cds-text-helper);
+  text-align: center; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.phase-lbl.active-phase { color: var(--cds-interactive); font-weight: 600; }
+
+/* ─────────────── Center: Map ─────────────── */
+.panel-center {
+  position: relative;
+  overflow: hidden;
+}
+#map {
+  width: 100%; height: 100%;
+  position: absolute; top:0; left:0;
+}
+
+/* Map overlay HUD */
+.map-hud {
+  position: absolute; z-index: 1000;
+  pointer-events: none;
+}
+.map-hud-tl {
+  top: var(--cds-spacing-05); left: var(--cds-spacing-05);
+}
+.map-hud-br {
+  bottom: var(--cds-spacing-05); right: var(--cds-spacing-05);
+}
+.map-hud-bl {
+  bottom: var(--cds-spacing-05); left: var(--cds-spacing-05);
+}
+.hud-card {
+  background: rgba(22,22,22,0.92);
+  border: 1px solid var(--cds-border-subtle-01);
+  backdrop-filter: blur(8px);
+  padding: var(--cds-spacing-04);
+  min-width: 180px;
+  pointer-events: auto;
+}
+.hud-card .hud-title {
+  font-size: 10px; font-weight: 600;
+  color: var(--cds-text-helper); text-transform: uppercase;
+  letter-spacing: 0.6px; margin-bottom: var(--cds-spacing-03);
+  display: flex; align-items: center; gap: 6px;
+}
+.hud-card .hud-row {
+  font-family: var(--cds-font-mono); font-size: 12px;
+  color: var(--cds-text-primary); margin-bottom: 2px;
+}
+.hud-card .hud-dim { color: var(--cds-text-helper); }
+
+/* Layer control */
+.map-layer-ctrl {
+  position: absolute; top: var(--cds-spacing-05); right: var(--cds-spacing-05);
+  z-index: 1000;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.layer-btn {
+  height: 32px; padding: 0 var(--cds-spacing-04);
+  background: rgba(22,22,22,0.92); border: 1px solid var(--cds-border-subtle-01);
+  color: var(--cds-text-secondary); font-family: var(--cds-font-sans); font-size: 11px;
+  cursor: pointer; backdrop-filter: blur(8px);
+  transition: background 100ms, color 100ms;
+}
+.layer-btn:hover { background: rgba(57,57,57,0.95); color: #fff; }
+.layer-btn.active { background: var(--cds-interactive); color: #fff; border-color: var(--cds-interactive); }
+
+/* Timer overlay */
+.timer-hud {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 999; pointer-events: none;
+  display: none;
+}
+.timer-hud.show { display: flex; }
+.timer-bubble {
+  background: rgba(15,98,254,0.15);
+  border: 1px solid var(--cds-interactive);
+  backdrop-filter: blur(12px);
+  padding: var(--cds-spacing-03) var(--cds-spacing-06);
+  font-family: var(--cds-font-mono); font-size: 28px; font-weight: 300;
+  color: var(--cds-interactive); letter-spacing: 4px;
+}
+
+/* ─────────────── Right Panel: Charts ─────────────── */
+.panel-right {
+  border-left: 1px solid var(--cds-border-subtle-00);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  background: var(--cds-background);
+}
+
+/* Chart tabs */
+.chart-tabs {
+  height: 40px; min-height: 40px;
+  background: var(--cds-layer-01);
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex;
+}
+.chart-tab {
+  flex: 1; height: 100%;
+  background: transparent; border: none; border-right: 1px solid var(--cds-border-subtle-00);
+  color: var(--cds-text-secondary); font-family: var(--cds-font-sans); font-size: 11px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  cursor: pointer; position: relative;
+  transition: background 70ms, color 70ms;
+}
+.chart-tab:last-child { border-right: none; }
+.chart-tab:hover { background: var(--cds-layer-hover); color: var(--cds-text-primary); }
+.chart-tab.active {
+  color: var(--cds-text-primary);
+  background: var(--cds-background);
+}
+.chart-tab.active::after {
+  content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+  background: var(--cds-interactive);
+}
+
+/* Charts panel — GPS: 3 small stacked charts */
+.charts-panel {
+  flex: 1; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* Big chart panel — Altitude & Dynamics: fills full panel height */
+.charts-panel.big-chart {
+  flex-direction: column;
+}
+.charts-panel.big-chart .chart-section {
+  flex: 1;
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.charts-panel.big-chart .chart-section:last-child { border-bottom: none; }
+
+/* Dynamics: 4 charts stacked (accel + pitch + roll + yaw) */
+.charts-panel.dyn-chart {
+  flex-direction: column;
+}
+.charts-panel.dyn-chart .chart-section {
+  flex: 1;
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.charts-panel.dyn-chart .chart-section:last-child { border-bottom: none; }
+.chart-section {
+  flex: 1;
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.chart-section:last-child { border-bottom: none; }
+.chart-section-header {
+  height: 32px; min-height: 32px;
+  background: var(--cds-layer-01);
+  border-bottom: 1px solid var(--cds-border-subtle-00);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 var(--cds-spacing-05);
+}
+.chart-section-title {
+  font-size: 10px; font-weight: 600; color: var(--cds-text-helper);
+  text-transform: uppercase; letter-spacing: 0.6px;
+}
+.chart-current-val {
+  font-family: var(--cds-font-mono); font-size: 13px;
+  color: var(--cds-text-primary);
+}
+.chart-canvas-wrap {
+  flex: 1; padding: var(--cds-spacing-03) var(--cds-spacing-05); min-height: 0;
+  position: relative;
+}
+.chart-canvas-wrap canvas { position: absolute; inset: var(--cds-spacing-03) var(--cds-spacing-05); }
+
+/* GPS Stats below charts */
+.gps-stats {
+  background: var(--cds-layer-01);
+  border-top: 1px solid var(--cds-border-subtle-00);
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--cds-spacing-03);
+}
+.gps-stat-item .gps-stat-label {
+  font-size: 9px; font-weight: 600; color: var(--cds-text-helper);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.gps-stat-item .gps-stat-val {
+  font-family: var(--cds-font-mono); font-size: 11px; color: var(--cds-text-primary);
+  margin-top: 2px;
+}
+
+/* Share panel */
+.share-panel {
+  background: var(--cds-layer-01);
+  border-top: 1px solid var(--cds-border-subtle-00);
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+}
+.share-title {
+  font-size: 10px; font-weight: 600; color: var(--cds-text-helper);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: var(--cds-spacing-03);
+  display: flex; align-items: center; gap: 6px;
+}
+.share-url {
+  font-family: var(--cds-font-mono); font-size: 11px;
+  color: var(--cds-text-secondary);
+  background: var(--cds-field-01); padding: var(--cds-spacing-03);
+  border: 1px solid var(--cds-border-subtle-01);
+  word-break: break-all; margin-bottom: var(--cds-spacing-03);
+  cursor: pointer; transition: border-color 100ms;
+}
+.share-url:hover { border-color: var(--cds-interactive); }
+.share-buttons { display: flex; gap: 4px; }
+
+/* ─────────────── Carbon Inline Notification ─────────────── */
+.cds--inline-notification {
+  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+  display: flex; align-items: flex-start; gap: var(--cds-spacing-04);
+  background: var(--cds-layer-02);
+  border-left: 4px solid var(--cds-support-success);
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+  min-width: 240px;
+  transform: translateY(80px); opacity: 0;
+  transition: transform 200ms cubic-bezier(.2,0,.38,.9), opacity 200ms;
+  pointer-events: none;
+}
+.cds--inline-notification.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
+.cds--inline-notification.warn { border-left-color: var(--cds-support-warning); }
+.notif-body { flex:1; }
+.notif-title-text { font-size: 13px; font-weight: 600; color: var(--cds-text-primary); }
+.notif-sub { font-size: 12px; color: var(--cds-text-secondary); margin-top: 2px; }
+.notif-close { background: none; border: none; color: var(--cds-text-secondary); cursor: pointer; padding: 0; font-size: 18px; line-height: 1; }
+.notif-close:hover { color: var(--cds-text-primary); }
+
+/* ─────────────── Leaflet Custom Overrides ─────────────── */
+.leaflet-container { background: #1a1a1a !important; }
+.leaflet-control-attribution { background: rgba(22,22,22,0.8) !important; color: #6f6f6f !important; font-size:9px!important; }
+.leaflet-control-attribution a { color: #8d8d8d !important; }
+
+/* Rocket popup */
+.rocket-popup {
+  background: var(--cds-layer-01) !important;
+  border: 1px solid var(--cds-interactive) !important;
+  border-radius: 0 !important; padding: 0 !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6) !important;
+}
+.rocket-popup .leaflet-popup-content-wrapper { background:transparent; border:none; box-shadow:none; border-radius:0; padding: var(--cds-spacing-04); }
+.rocket-popup .leaflet-popup-content { margin:0; color: var(--cds-text-primary); font-family: var(--cds-font-mono); font-size:12px; }
+.rocket-popup .leaflet-popup-tip-container { display:none; }
+
+/* Altitude ring on map */
+@keyframes radar-ping {
+  0%   { r: 10px; opacity: 0.8; }
+  100% { r: 50px; opacity: 0; }
+}
+
+/* Timer display in header */
+#timer-header {
+  font-family: var(--cds-font-mono); font-size: 13px;
+  color: var(--cds-support-warning); letter-spacing: 2px;
+}
+
+/* Speed indicator */
+.speed-bar-wrap { margin: 0 var(--cds-spacing-05) var(--cds-spacing-04); }
+.speed-label { font-size: 10px; color: var(--cds-text-helper); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: var(--cds-spacing-02); display: flex; justify-content: space-between; }
+.speed-track { height: 4px; background: var(--cds-layer-02); position: relative; }
+.speed-fill { height: 100%; background: var(--cds-interactive); transition: width 200ms ease; width: 0%; }
+.speed-ticks { display: flex; justify-content: space-between; margin-top: 2px; }
+.speed-tick { font-size: 9px; color: var(--cds-text-helper); font-family: var(--cds-font-mono); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cds-border-subtle-00); }
+
+/* ─── Chart Scroll / Pan Controls ─── */
+.chart-scroll-bar {
+  height: 24px; min-height: 24px;
+  background: var(--cds-layer-01);
+  border-top: 1px solid var(--cds-border-subtle-00);
+  display: flex; align-items: center;
+  padding: 0 var(--cds-spacing-05);
+  gap: var(--cds-spacing-03);
+  user-select: none;
+}
+.chart-scroll-track {
+  flex: 1; height: 4px;
+  background: var(--cds-layer-02);
+  border-radius: 2px;
+  position: relative;
+  cursor: pointer;
+}
+.chart-scroll-thumb {
+  position: absolute; top: 0; height: 100%;
+  background: var(--cds-interactive);
+  border-radius: 2px;
+  cursor: grab;
+  transition: background 100ms;
+  min-width: 20px;
+}
+.chart-scroll-thumb:active { cursor: grabbing; background: var(--cds-interactive-hover); }
+.chart-scroll-btn {
+  width: 20px; height: 20px;
+  background: transparent;
+  border: 1px solid var(--cds-border-subtle-01);
+  color: var(--cds-text-secondary);
+  font-size: 10px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 70ms, color 70ms;
+}
+.chart-scroll-btn:hover { background: var(--cds-layer-02); color: var(--cds-text-primary); }
+.chart-scroll-live {
+  font-family: var(--cds-font-mono); font-size: 9px;
+  color: var(--cds-text-helper);
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  transition: border-color 70ms, color 70ms;
+}
+.chart-scroll-live.live-mode { color: var(--cds-support-success); border-color: var(--cds-support-success); }
+.chart-scroll-range {
+  font-family: var(--cds-font-mono); font-size: 9px;
+  color: var(--cds-text-helper);
+  white-space: nowrap;
+  min-width: 60px; text-align: right;
+}
+
+/* Drag-pan overlay on chart canvas */
+.chart-canvas-wrap {
+  cursor: ew-resize;
+}
+.chart-canvas-wrap.live-cursor {
+  cursor: default;
+}
+
+@keyframes ejectPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(250,77,86,0); }
+  50%      { box-shadow: 0 0 0 4px rgba(250,77,86,0.35); }
+}
+@keyframes modalIn {
+  from { opacity:0; transform:translateY(-16px) scale(0.97); }
+  to   { opacity:1; transform:translateY(0)     scale(1); }
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Carbon UI Shell Header ─── -->
+<header class="cds--header">
+  <a href="#" class="cds--header__name">
+    <span class="prefix">NURA</span>
+    Mission Control
+    <small style="font-weight:300;color:var(--cds-text-helper);margin-left:4px;font-size:11px;">v4.0</small>
+  </a>
+  <div class="header-divider"></div>
+  <span id="status-tag" class="cds--tag cds--tag--gray">● IDLE</span>
+  <div class="header-divider"></div>
+  <span id="timer-header">T+00:00:00</span>
+  <div class="header-actions">
+    <span id="gps-lock-tag" class="cds--tag cds--tag--gray" title="GPS Signal">GPS —</span>
+  </div>
+</header>
+
+<div id="root">
+  <!-- ─── Toolbar ─── -->
+  <div class="toolbar">
+    <input class="cds--text-input" id="csv-url" placeholder="Telemetry URL  (e.g. ws://192.168.1.1:8080)" value="demo_flight" style="flex:1;">
+    <button class="cds--btn cds--btn--primary" id="start-btn" onclick="toggleStream()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="0" stroke="currentColor" stroke-width="1.5"/><line x1="14" y1="8" x2="16" y2="8" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="14" x2="8" y2="16" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="8" x2="0" y2="8" stroke="currentColor" stroke-width="1.5"/></svg>
+      CONNECT
+    </button>
+    <button class="cds--btn cds--btn--secondary" onclick="resetAll()" title="Reset">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 0 8 5 11 2.5Z" fill="currentColor"/></svg>
+      RESET
+    </button>
+    <button class="cds--btn cds--btn--ghost" id="map-track-btn" onclick="toggleTrack()" title="Track rocket on map">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
+      AUTO-TRACK
+    </button>
+    <button class="cds--btn cds--btn--ghost" onclick="openSharePanel()" style="margin-left:auto;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="12" cy="3" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="13" r="2" stroke="currentColor" stroke-width="1.3"/><line x1="4.8" y1="7.1" x2="10.2" y2="4.0" stroke="currentColor" stroke-width="1.3"/><line x1="4.8" y1="8.9" x2="10.2" y2="12.0" stroke="currentColor" stroke-width="1.3"/></svg>
+      SHARE
+    </button>
+    <div class="header-divider" style="height:24px;"></div>
+    <button class="cds--btn" id="eject-btn" onclick="openEjectModal()" style="
+      background:#750e13; color:#fa4d56;
+      border:1px solid #fa4d56;
+      font-weight:700; letter-spacing:0.08em;
+      animation: ejectPulse 2.5s ease-in-out infinite;
+    ">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M8 1 L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M4 6 L8 1 L12 6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <path d="M3 10 Q8 7 13 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        <ellipse cx="8" cy="13" rx="5" ry="2.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+        <line x1="3" y1="10" x2="3" y2="13" stroke="currentColor" stroke-width="1"/>
+        <line x1="13" y1="10" x2="13" y2="13" stroke="currentColor" stroke-width="1"/>
+      </svg>
+      낙하산 강제 사출
+    </button>
+
+  </div>
+
+<!-- ─── 낙하산 사출 경고 모달 (Carbon Modal) ─── -->
+<div id="eject-modal-overlay" onclick="closeEjectModal()" style="
+  display:none; position:fixed; inset:0; z-index:99999;
+  background:rgba(0,0,0,0.75);
+  align-items:center; justify-content:center;
+">
+  <div onclick="event.stopPropagation()" style="
+    background:#161616;
+    border:1px solid #fa4d56;
+    border-top:4px solid #fa4d56;
+    width:480px; max-width:94vw;
+    box-shadow:0 0 60px rgba(250,77,86,0.35);
+    font-family:'IBM Plex Sans',sans-serif;
+    animation: modalIn 0.18s cubic-bezier(.2,0,.38,.9);
+  ">
+    <!-- Modal header -->
+    <div style="
+      display:flex; align-items:center; gap:12px;
+      padding:16px 20px; border-bottom:1px solid #393939;
+      background:#1c0a0a;
+    ">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M10 2L18 17H2L10 2Z" stroke="#fa4d56" stroke-width="1.5" fill="rgba(250,77,86,0.15)"/>
+        <line x1="10" y1="8" x2="10" y2="12" stroke="#fa4d56" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="10" cy="14.5" r="0.8" fill="#fa4d56"/>
+      </svg>
+      <span style="font-size:14px;font-weight:700;color:#fa4d56;letter-spacing:0.06em;">
+        [ 경고 ] 낙하산 강제 사출
+      </span>
+    </div>
+
+    <!-- Modal body -->
+    <div style="padding:28px 24px 20px;">
+      <p style="
+        font-size:16px; font-weight:600;
+        color:#f4f4f4; line-height:1.6; margin-bottom:16px;
+      ">
+        정말로 낙하산을 사출하시겠습니까????
+      </p>
+      <div style="
+        background:#2a0a0a; border-left:3px solid #fa4d56;
+        padding:10px 14px; margin-bottom:8px;
+      ">
+        <p style="font-size:12px;color:#c6c6c6;line-height:1.6;font-family:'IBM Plex Mono',monospace;">
+          ⚠ 이 작업은 되돌릴 수 없습니다.<br>
+          파이로 장치가 즉시 실행됩니다.<br>
+          현재 고도와 상태를 반드시 확인하십시오.
+        </p>
+      </div>
+      <p style="font-size:11px;color:#8d8d8d;font-family:'IBM Plex Mono',monospace;" id="eject-status-line">
+        <!-- 사출 후 상태 표시 -->
+      </p>
+    </div>
+
+    <!-- Modal footer -->
+    <div style="
+      display:flex; gap:1px;
+      border-top:1px solid #393939;
+    ">
+      <button onclick="closeEjectModal()" style="
+        flex:1; height:52px;
+        background:#393939; border:none; color:#f4f4f4;
+        font-family:'IBM Plex Sans',sans-serif; font-size:14px; font-weight:600;
+        cursor:pointer; letter-spacing:0.04em;
+        transition:background 70ms;
+      " onmouseover="this.style.background='#525252'" onmouseout="this.style.background='#393939'">
+        아니오
+      </button>
+      <button id="eject-confirm-btn" onclick="confirmEject()" style="
+        flex:1; height:52px;
+        background:#750e13; border:1px solid #fa4d56; color:#fa4d56;
+        font-family:'IBM Plex Sans',sans-serif; font-size:14px; font-weight:700;
+        cursor:pointer; letter-spacing:0.06em;
+        transition:background 70ms;
+      " onmouseover="this.style.background='#a11e25'" onmouseout="this.style.background='#750e13'">
+        예 — 사출 실행
+      </button>
+    </div>
+  </div>
+</div>
+
+  <!-- ─── Content Grid ─── -->
+  <div class="content-grid">
+
+    <!-- ─── LEFT PANEL ─── -->
+    <div class="panel-left">
+      <!-- Rocket Visualizer -->
+      <div class="section-header">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1 L8 5 L11 5 L8.5 7.5 L9.5 11 L6 9 L2.5 11 L3.5 7.5 L1 5 L4 5 Z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+        Attitude Visualizer
+      </div>
+      <div class="rocket-viz">
+        <div class="crosshair-h"></div>
+        <div class="crosshair-v"></div>
+        <canvas id="rocket-canvas" style="display:block;width:100%;height:100%;"></canvas>
+      </div>
+
+      <!-- Metrics Grid -->
+      <div class="metric-grid">
+        <div class="metric-cell highlight">
+          <div class="metric-label">Altitude</div>
+          <div class="metric-value"><span id="v-alt">0.0</span><span class="metric-unit">m</span></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Velocity</div>
+          <div class="metric-value"><span id="v-vel">0.0</span><span class="metric-unit">m/s</span></div>
+        </div>
+        <div class="metric-cell highlight">
+          <div class="metric-label">Pitch</div>
+          <div class="metric-value"><span id="v-pitch">0.0</span><span class="metric-unit">°</span></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Roll</div>
+          <div class="metric-value"><span id="v-roll">0.0</span><span class="metric-unit">°</span></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Accel</div>
+          <div class="metric-value"><span id="v-accel">0.0</span><span class="metric-unit">G</span></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Bearing</div>
+          <div class="metric-value"><span id="v-bearing">—</span><span class="metric-unit">°</span></div>
+        </div>
+      </div>
+
+      <!-- Velocity bar -->
+      <div class="speed-bar-wrap" style="margin-top:12px;">
+        <div class="speed-label">
+          <span>Velocity Profile</span>
+          <span id="speed-pct">0%</span>
+        </div>
+        <div class="speed-track">
+          <div class="speed-fill" id="speed-fill"></div>
+        </div>
+        <div class="speed-ticks">
+          <span class="speed-tick">0</span>
+          <span class="speed-tick">50</span>
+          <span class="speed-tick">100</span>
+          <span class="speed-tick">150</span>
+          <span class="speed-tick">200+</span>
+        </div>
+      </div>
+
+      <!-- Flight Phase -->
+      <div class="flight-phase">
+        <div class="section-header" style="margin: 0 -0px 8px; padding:0;">
+          <span style="font-size:10px;color:var(--cds-text-helper);text-transform:uppercase;letter-spacing:0.6px;font-weight:600;">Flight Phase: <span id="phase-name" style="color:var(--cds-text-secondary);">PRE-LAUNCH</span></span>
+        </div>
+        <div class="phase-bar">
+          <div class="phase-seg" id="ph-0"></div>
+          <div class="phase-seg" id="ph-1"></div>
+          <div class="phase-seg" id="ph-2"></div>
+          <div class="phase-seg" id="ph-3"></div>
+          <div class="phase-seg" id="ph-4"></div>
+        </div>
+        <div class="phase-labels">
+          <span class="phase-lbl" id="phl-0">Pad</span>
+          <span class="phase-lbl" id="phl-1">Boost</span>
+          <span class="phase-lbl" id="phl-2">Coast</span>
+          <span class="phase-lbl" id="phl-3">Descent</span>
+          <span class="phase-lbl" id="phl-4">Recovery</span>
+        </div>
+      </div>
+
+      <!-- Recovery Coordinates -->
+      <div class="recovery-notification">
+        <div class="notif-title">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 0C4.5 0 2.4 2 2.4 4.5 2.4 7.9 7 14 7 14s4.6-6.1 4.6-9.5C11.6 2 9.5 0 7 0zm0 6.5A2 2 0 1 1 7 2.5a2 2 0 0 1 0 4z"/></svg>
+          Recovery Target Coordinates
+        </div>
+        <div class="coord-row">
+          <span class="coord-label">LAT</span><br>
+          <span id="v-lat">34.425800</span>
+        </div>
+        <div class="coord-row" style="margin-top:4px;">
+          <span class="coord-label">LNG</span><br>
+          <span id="v-lng">127.521100</span>
+        </div>
+        <div style="display:flex;gap:4px;margin-top:10px;">
+          <button class="cds--btn cds--btn--secondary cds--btn--sm" onclick="copyCoords()" style="flex:1;font-size:11px;">
+            COPY COORDS
+          </button>
+          <button class="cds--btn cds--btn--ghost cds--btn--sm" onclick="panToRocket()" style="flex:1;font-size:11px;">
+            GO TO TARGET
+          </button>
+        </div>
+      </div>
+
+    </div> <!-- /panel-left -->
+
+    <!-- ─── CENTER: MAP or BIG CHART ─── -->
+    <div class="panel-center" id="panel-center">
+      <!-- Map (always rendered, shown/hidden via CSS) -->
+      <div id="map-container" style="position:absolute;inset:0;transition:all 0.2s;">
+        <div id="map" style="width:100%;height:100%;"></div>
+
+        <!-- HUD: Position -->
+        <div class="map-hud map-hud-tl">
+          <div class="hud-card">
+            <div class="hud-title">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2" fill="none"/><circle cx="6" cy="6" r="2" fill="currentColor"/></svg>
+              Live Position
+            </div>
+            <div class="hud-row"><span class="hud-dim">LAT</span> <span id="hud-lat">34.425800</span></div>
+            <div class="hud-row"><span class="hud-dim">LNG</span> <span id="hud-lng">127.521100</span></div>
+            <div class="hud-row"><span class="hud-dim">ALT</span> <span id="hud-alt">0.0</span> m</div>
+            <div class="hud-row"><span class="hud-dim">DIST FROM PAD</span> <span id="hud-dist">0.0</span> m</div>
+          </div>
+        </div>
+
+        <!-- HUD: Landing Prediction -->
+        <div class="map-hud map-hud-bl">
+          <div class="hud-card" style="border-color:var(--cds-support-warning);">
+            <div class="hud-title" style="color:var(--cds-support-warning);">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0C3.5 0 1.5 2 1.5 4.5 1.5 7.9 6 12 6 12s4.5-4.1 4.5-7.5C10.5 2 8.5 0 6 0zm0 6A1.5 1.5 0 1 1 6 3a1.5 1.5 0 0 1 0 3z"/></svg>
+              Landing Prediction
+            </div>
+            <div class="hud-row" id="landing-stat" style="color:var(--cds-text-secondary);">Awaiting data...</div>
+          </div>
+        </div>
+
+        <!-- Map Layer Controls -->
+        <div class="map-layer-ctrl">
+          <button class="layer-btn" id="btn-satellite" onclick="setMapLayer('satellite')">🛰 Satellite</button>
+          <button class="layer-btn active" id="btn-topo" onclick="setMapLayer('topo')">🗺 Topographic</button>
+          <button class="layer-btn" id="btn-dark" onclick="setMapLayer('dark')">🌑 Dark</button>
+          <button class="layer-btn" id="btn-street" onclick="setMapLayer('street')">🏘 Street</button>
+        </div>
+      </div>
+
+      <!-- Big chart area (shown when alt/dyn tab active) -->
+      <div id="big-chart-container" style="display:none;flex-direction:column;height:100%;width:100%;">
+        <!-- Altitude big panel -->
+        <div class="charts-panel big-chart" id="panel-alt-big" style="display:none;flex:1;">
+          <div class="chart-section" style="flex:2;">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:var(--cds-interactive);">●</span> Altitude Profile</span>
+              <span class="chart-current-val" id="cur-alt2">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">m</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-alt"><canvas id="alt-chart"></canvas></div>
+          </div>
+          <div class="chart-section">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:#be95ff;">●</span> Vertical Velocity</span>
+              <span class="chart-current-val" id="cur-vvel">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">m/s</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-vvel"><canvas id="vvel-chart"></canvas></div>
+          </div>
+          <!-- Shared scroll bar for Altitude tab -->
+          <div class="chart-scroll-bar" id="scroll-bar-alt">
+            <button class="chart-scroll-btn" id="scroll-btn-alt-left">◀</button>
+            <div class="chart-scroll-track" id="scroll-track-alt">
+              <div class="chart-scroll-thumb" id="scroll-thumb-alt"></div>
+            </div>
+            <button class="chart-scroll-btn" id="scroll-btn-alt-right">▶</button>
+            <span class="chart-scroll-range" id="scroll-range-alt">—</span>
+            <span class="chart-scroll-live live-mode" id="scroll-live-alt">LIVE</span>
+          </div>
+        </div>
+        <!-- Dynamics big panel -->
+        <div class="charts-panel dyn-chart" id="panel-dyn-big" style="display:none;flex:1;">
+          <div class="chart-section">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:var(--cds-support-error);">●</span> Acceleration</span>
+              <span class="chart-current-val" id="cur-accel">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">G</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-accel"><canvas id="accel-chart"></canvas></div>
+          </div>
+          <div class="chart-section">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:var(--cds-support-warning);">●</span> Pitch</span>
+              <span class="chart-current-val" id="cur-pitch">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">°</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-pitch"><canvas id="pitch-chart"></canvas></div>
+          </div>
+          <div class="chart-section">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:#08bdba;">●</span> Roll</span>
+              <span class="chart-current-val" id="cur-roll">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">°</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-roll"><canvas id="roll-chart"></canvas></div>
+          </div>
+          <div class="chart-section">
+            <div class="chart-section-header">
+              <span class="chart-section-title"><span style="color:#be95ff;">●</span> Yaw</span>
+              <span class="chart-current-val" id="cur-yaw">—<span style="font-size:10px;color:var(--cds-text-helper);margin-left:3px;">°</span></span>
+            </div>
+            <div class="chart-canvas-wrap" id="wrap-yaw"><canvas id="yaw-chart"></canvas></div>
+          </div>
+          <!-- Shared scroll bar for Dynamics tab -->
+          <div class="chart-scroll-bar" id="scroll-bar-dyn">
+            <button class="chart-scroll-btn" id="scroll-btn-dyn-left">◀</button>
+            <div class="chart-scroll-track" id="scroll-track-dyn">
+              <div class="chart-scroll-thumb" id="scroll-thumb-dyn"></div>
+            </div>
+            <button class="chart-scroll-btn" id="scroll-btn-dyn-right">▶</button>
+            <span class="chart-scroll-range" id="scroll-range-dyn">—</span>
+            <span class="chart-scroll-live live-mode" id="scroll-live-dyn">LIVE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── RIGHT PANEL: tabs + small GPS charts + mini-map when chart active ─── -->
+    <div class="panel-right">
+      <div class="chart-tabs">
+        <button class="chart-tab active" id="tab-gps" onclick="setTab('gps')">GPS Track</button>
+        <button class="chart-tab" id="tab-alt" onclick="setTab('alt')">Altitude</button>
+        <button class="chart-tab" id="tab-dyn" onclick="setTab('dyn')">Dynamics</button>
+      </div>
+
+      <!-- GPS Tab: 3 small charts (only when gps active) -->
+      <div class="charts-panel" id="panel-gps" style="display:flex;">
+        <div class="chart-section">
+          <div class="chart-section-header">
+            <span class="chart-section-title"><span style="color:var(--cds-support-success);">●</span> Latitude</span>
+            <span class="chart-current-val" id="cur-lat">—</span>
+          </div>
+          <div class="chart-canvas-wrap" id="wrap-lat"><canvas id="lat-chart"></canvas></div>
+        </div>
+        <div class="chart-section">
+          <div class="chart-section-header">
+            <span class="chart-section-title"><span style="color:var(--cds-support-info);">●</span> Longitude</span>
+            <span class="chart-current-val" id="cur-lng">—</span>
+          </div>
+          <div class="chart-canvas-wrap" id="wrap-lng"><canvas id="lng-chart"></canvas></div>
+        </div>
+        <div class="chart-section">
+          <div class="chart-section-header">
+            <span class="chart-section-title"><span style="color:var(--cds-interactive);">●</span> GPS Altitude (m)</span>
+            <span class="chart-current-val" id="cur-galt">—</span>
+          </div>
+          <div class="chart-canvas-wrap" id="wrap-galt"><canvas id="galt-chart"></canvas></div>
+        </div>
+        <!-- Shared scroll bar for GPS tab -->
+        <div class="chart-scroll-bar" id="scroll-bar-gps">
+          <button class="chart-scroll-btn" id="scroll-btn-gps-left">◀</button>
+          <div class="chart-scroll-track" id="scroll-track-gps">
+            <div class="chart-scroll-thumb" id="scroll-thumb-gps"></div>
+          </div>
+          <button class="chart-scroll-btn" id="scroll-btn-gps-right">▶</button>
+          <span class="chart-scroll-range" id="scroll-range-gps">—</span>
+          <span class="chart-scroll-live live-mode" id="scroll-live-gps">LIVE</span>
+        </div>
+      </div>
+
+      <!-- Mini-map panel (shown in right panel when alt/dyn tab active) -->
+      <div id="mini-map-panel" style="display:none;flex:1;flex-direction:column;min-height:0;">
+        <div class="section-header">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2" fill="none"/><circle cx="6" cy="6" r="2" fill="currentColor"/></svg>
+          Live Map
+        </div>
+        <div style="flex:1;position:relative;min-height:0;">
+          <div id="mini-map" style="width:100%;height:100%;"></div>
+        </div>
+        <div style="padding:8px 12px;border-top:1px solid var(--cds-border-subtle-00);background:var(--cds-layer-01);">
+          <div style="font-size:10px;color:var(--cds-text-helper);font-family:var(--cds-font-mono);">
+            <span id="mini-lat">34.425800</span> / <span id="mini-lng">127.521100</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- GPS Stats (always visible at bottom) -->
+      <div class="gps-stats">
+        <div class="gps-stat-item">
+          <div class="gps-stat-label">Max Altitude</div>
+          <div class="gps-stat-val" id="stat-maxalt">—</div>
+        </div>
+        <div class="gps-stat-item">
+          <div class="gps-stat-label">Max Speed</div>
+          <div class="gps-stat-val" id="stat-maxspd">—</div>
+        </div>
+        <div class="gps-stat-item">
+          <div class="gps-stat-label">Total Dist</div>
+          <div class="gps-stat-val" id="stat-dist">—</div>
+        </div>
+        <div class="gps-stat-item">
+          <div class="gps-stat-label">GPS Points</div>
+          <div class="gps-stat-val" id="stat-pts">0</div>
+        </div>
+      </div>
+
+      <!-- Share Panel -->
+      <div class="share-panel" id="share-panel">
+        <div class="share-title">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="9.5" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="2.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><line x1="3.9" y1="5.3" x2="8.1" y2="3.2" stroke="currentColor" stroke-width="1.2"/><line x1="3.9" y1="6.7" x2="8.1" y2="8.8" stroke="currentColor" stroke-width="1.2"/></svg>
+          Share This View
+        </div>
+        <div class="share-url" id="share-url-box" onclick="copyShareLink()" title="Click to copy">
+          <span id="share-url-text">— Generate share link —</span>
+        </div>
+        <div class="share-buttons">
+          <button class="cds--btn cds--btn--primary cds--btn--sm" onclick="generateShareLink()" style="flex:1;font-size:11px;">
+            GENERATE LINK
+          </button>
+          <button class="cds--btn cds--btn--ghost cds--btn--sm" onclick="copyShareLink()" style="flex:1;font-size:11px;">
+            COPY
+          </button>
+        </div>
+      </div>
+
+    </div> <!-- /panel-right -->
+  </div> <!-- /content-grid -->
+</div> <!-- /root -->
+
+<!-- Notification Toast -->
+<div class="cds--inline-notification" id="toast">
+  <div class="notif-body">
+    <div class="notif-title-text" id="toast-title">Success</div>
+    <div class="notif-sub" id="toast-sub"></div>
+  </div>
+  <button class="notif-close" onclick="hideToast()">×</button>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+// ─────────────────────────────────────────────
+//  CONFIG & STATE
+// ─────────────────────────────────────────────
+const LAUNCH_SITE  = [34.4258, 127.5211]; // Naro Space Center, South Korea
+const MAX_POINTS   = 200;   // 차트에 한 번에 표시할 포인트 수 (뷰포트 크기)
+const MAX_HISTORY  = 10000; // 저장할 전체 포인트 수 (스크롤 히스토리)
+let isStreaming    = false;
+let autoTrack      = true;
+let demoIdx        = 0;
+let streamInterval = null;
+let currentTab     = 'gps';
+let stats = { maxAlt: 0, maxSpd: 0, totalDist: 0, points: 0 };
+let lastPos        = null;
+let prevAlt        = 0;
+let currentPhase   = 0;
+
+const flightData = { ts:[], alt:[], accel:[], lat:[], lng:[], pitch:[], roll:[], vvel:[], yaw:[] };
+
+// ─── Chart Scroll State ───────────────────────
+// 각 탭별 스크롤 상태: viewOffset = 뷰의 시작 인덱스, liveMode = 항상 최신 보기
+const scrollState = {
+  gps: { viewOffset: 0, liveMode: true, dragging: false, dragStartX: 0, dragStartOffset: 0 },
+  alt: { viewOffset: 0, liveMode: true, dragging: false, dragStartX: 0, dragStartOffset: 0 },
+  dyn: { viewOffset: 0, liveMode: true, dragging: false, dragStartX: 0, dragStartOffset: 0 },
+};
+
+// ─────────────────────────────────────────────
+//  MAP INITIALIZATION
+// ─────────────────────────────────────────────
+const map = L.map('map', {
+  center: LAUNCH_SITE, zoom: 14,
+  zoomControl: false,
+  attributionControl: true
+});
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+// Map tile layers
+const tileLayers = {
+  topo: L.tileLayer(
+    'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    { attribution:'© OpenTopoMap', maxZoom: 17, opacity: 1 }
+  ),
+  satellite: L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'© Esri', maxZoom: 18 }
+  ),
+  dark: L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    { attribution:'© OpenStreetMap, CartoDB', maxZoom: 19 }
+  ),
+  street: L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { attribution:'© OpenStreetMap', maxZoom: 19 }
+  )
+};
+let currentLayer = 'topo';
+tileLayers.topo.addTo(map);
+
+function setMapLayer(name) {
+  if(currentLayer === name) return;
+  map.removeLayer(tileLayers[currentLayer]);
+  tileLayers[name].addTo(map);
+  currentLayer = name;
+  document.querySelectorAll('.layer-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-'+name).classList.add('active');
+}
+
+// ─── Markers & Layers ───
+const launchIcon = L.divIcon({
+  html: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="10" fill="rgba(15,98,254,0.2)" stroke="#0f62fe" stroke-width="1.5"/>
+    <circle cx="12" cy="12" r="4" fill="#0f62fe"/>
+    <line x1="12" y1="2" x2="12" y2="22" stroke="#0f62fe" stroke-width="0.5" opacity="0.4"/>
+    <line x1="2" y1="12" x2="22" y2="12" stroke="#0f62fe" stroke-width="0.5" opacity="0.4"/>
+  </svg>`,
+  className: '', iconSize:[24,24], iconAnchor:[12,12]
+});
+
+const rocketIcon = L.divIcon({
+  html: `<div id="rocket-map-icon" style="position:relative;">
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" style="filter:drop-shadow(0 0 8px #0f62fe)">
+      <circle cx="16" cy="16" r="14" fill="rgba(15,98,254,0.15)" stroke="#0f62fe" stroke-width="1.5"/>
+      <path d="M16 6 L19 14 L16 12 L13 14 Z" fill="#f4f4f4"/>
+      <path d="M16 12 L16 22" stroke="#fa4d56" stroke-width="2"/>
+      <circle cx="16" cy="16" r="3" fill="#0f62fe"/>
+    </svg>
+    <div id="rocket-ping" style="position:absolute;top:0;left:0;width:32px;height:32px;"></div>
+  </div>`,
+  className: '', iconSize:[32,32], iconAnchor:[16,16]
+});
+
+const landingIcon = L.divIcon({
+  html: `<svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <circle cx="14" cy="14" r="12" fill="rgba(241,194,27,0.2)" stroke="#f1c21b" stroke-width="1.5"/>
+    <path d="M14 5 C10.5 5 8 8 8 11 C8 15 14 23 14 23 S20 15 20 11 C20 8 17.5 5 14 5Z" fill="#f1c21b"/>
+    <circle cx="14" cy="11" r="2.5" fill="#161616"/>
+  </svg>`,
+  className: '', iconSize:[28,28], iconAnchor:[14,22]
+});
+
+// Launch pad marker
+L.marker(LAUNCH_SITE, { icon: launchIcon })
+  .addTo(map)
+  .bindPopup('<b style="color:#0f62fe">🚀 Launch Pad</b><br><small>Naro Space Center</small>');
+
+const rocketMarker = L.marker(LAUNCH_SITE, { icon: rocketIcon, zIndexOffset: 1000 })
+  .addTo(map)
+  .bindPopup('<b>Rocket</b><br>Live Position');
+
+const trajectoryPath = L.polyline([], {
+  color: '#fa4d56', weight: 2.5, opacity: 0.9,
+  dashArray: null
+}).addTo(map);
+
+// Prediction line (dashed)
+const predictionLine = L.polyline([], {
+  color: '#f1c21b', weight: 1.5, opacity: 0.5, dashArray: '6 4'
+}).addTo(map);
+
+const landingMarker = L.marker([0,0], { icon: landingIcon, opacity: 0 })
+  .addTo(map);
+
+// Accuracy circle
+const accuracyCircle = L.circle(LAUNCH_SITE, {
+  radius: 50, color: '#0f62fe', fillColor: '#0f62fe',
+  fillOpacity: 0.05, weight: 1, dashArray: '4 4'
+}).addTo(map);
+
+// ─────────────────────────────────────────────
+//  CHART FACTORY
+// ─────────────────────────────────────────────
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: '#262626',
+      borderColor: '#393939',
+      borderWidth: 1,
+      titleColor: '#8d8d8d',
+      bodyColor: '#f4f4f4',
+      titleFont: { family: 'IBM Plex Mono', size: 10 },
+      bodyFont:  { family: 'IBM Plex Mono', size: 11 },
+    }
+  },
+  scales: {
+    x: { display: false },
+    y: {
+      grid: { color: 'rgba(57,57,57,0.6)', drawBorder: false },
+      ticks: { color: '#8d8d8d', font: { family: 'IBM Plex Mono', size: 9 }, maxTicksLimit: 4 },
+      border: { display: false }
+    }
+  }
+};
+
+function makeChart(id, color, fill=true) {
+  const ctx = document.getElementById(id);
+  if(!ctx) return null;
+  return new Chart(ctx.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: color,
+        borderWidth: 1.5,
+        fill: fill,
+        backgroundColor: fill ? hexAlpha(color, 0.08) : 'transparent',
+        pointRadius: 0,
+        tension: 0.3
+      }]
+    },
+    options: { ...chartDefaults }
+  });
+}
+
+function hexAlpha(hex, a) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// Create all charts
+const charts = {
+  lat:   makeChart('lat-chart',   '#24a148', true),
+  lng:   makeChart('lng-chart',   '#0043ce', true),
+  galt:  makeChart('galt-chart',  '#0f62fe', true),
+  alt:   makeChart('alt-chart',   '#0f62fe', true),
+  vvel:  makeChart('vvel-chart',  '#be95ff', false),
+  accel: makeChart('accel-chart', '#fa4d56', false),
+  pitch: makeChart('pitch-chart', '#f1c21b', false),
+  roll:  makeChart('roll-chart',  '#08bdba', false),
+  yaw:   makeChart('yaw-chart',   '#be95ff', false),
+};
+
+function pushChart(chart, label, value, maxPts=MAX_POINTS) {
+  if(!chart) return;
+  chart.data.labels.push(label);
+  chart.data.datasets[0].data.push(value);
+  if(chart.data.labels.length > maxPts) {
+    chart.data.labels.shift();
+    chart.data.datasets[0].data.shift();
+  }
+  chart.update('none');
+}
+
+// ─── Viewport-based chart rendering ──────────────────────────────────────────
+// 전체 데이터를 flightData에 보관하고, 뷰포트(MAX_POINTS 크기 창)만 Chart에 렌더링
+
+const TAB_CHART_KEYS = {
+  gps: ['lat', 'lng', 'galt'],
+  alt: ['alt', 'vvel'],
+  dyn: ['accel', 'pitch', 'roll', 'yaw'],
+};
+
+// 차트 key → flightData key 매핑
+const CHART_DATA_KEY = {
+  lat: 'lat', lng: 'lng', galt: 'alt',
+  alt: 'alt', vvel: 'vvel',
+  accel: 'accel', pitch: 'pitch', roll: 'roll', yaw: 'yaw',
+};
+
+function renderChartsForTab(tab) {
+  const keys = TAB_CHART_KEYS[tab];
+  if (!keys) return;
+  const state = scrollState[tab];
+  const total = flightData.ts.length;
+
+  if (total === 0) return;
+
+  // liveMode이면 항상 맨 끝 뷰로
+  if (state.liveMode) {
+    state.viewOffset = Math.max(0, total - MAX_POINTS);
+  }
+
+  const start = Math.max(0, state.viewOffset);
+  const end   = Math.min(total, start + MAX_POINTS);
+  const labels = flightData.ts.slice(start, end);
+
+  keys.forEach(key => {
+    const chart = charts[key];
+    if (!chart) return;
+    const dataKey = CHART_DATA_KEY[key];
+    const slice   = flightData[dataKey].slice(start, end);
+    chart.data.labels = [...labels];
+    chart.data.datasets[0].data = [...slice];
+    chart.update('none');
+  });
+
+  updateScrollBar(tab);
+}
+
+function updateScrollBar(tab) {
+  const state  = scrollState[tab];
+  const total  = flightData.ts.length;
+  const thumb  = document.getElementById('scroll-thumb-' + tab);
+  const range  = document.getElementById('scroll-range-' + tab);
+  const liveEl = document.getElementById('scroll-live-' + tab);
+  if (!thumb) return;
+
+  if (total <= MAX_POINTS) {
+    // 데이터가 뷰보다 적으면 thumb을 full width로
+    thumb.style.left  = '0%';
+    thumb.style.width = '100%';
+  } else {
+    const ratio  = MAX_POINTS / total;
+    const pos    = state.viewOffset / (total - MAX_POINTS);
+    thumb.style.width = (ratio * 100).toFixed(1) + '%';
+    thumb.style.left  = (pos * (100 - ratio * 100)).toFixed(1) + '%';
+  }
+
+  // 시간 범위 표시
+  if (total > 0) {
+    const start = Math.max(0, state.viewOffset);
+    const end   = Math.min(total - 1, start + MAX_POINTS - 1);
+    const t0 = flightData.ts[start] ?? '';
+    const t1 = flightData.ts[end]   ?? '';
+    range.textContent = t0 + '–' + t1;
+  }
+
+  if (liveEl) {
+    liveEl.classList.toggle('live-mode', state.liveMode);
+  }
+}
+
+function setScrollLive(tab, live) {
+  scrollState[tab].liveMode = live;
+  if (live) {
+    const total = flightData.ts.length;
+    scrollState[tab].viewOffset = Math.max(0, total - MAX_POINTS);
+  }
+  renderChartsForTab(tab);
+}
+
+function scrollChartBy(tab, delta) {
+  const state = scrollState[tab];
+  const total = flightData.ts.length;
+  state.liveMode = false;
+  state.viewOffset = Math.max(0, Math.min(total - MAX_POINTS, state.viewOffset + delta));
+  // 맨 끝에 도달하면 자동 live
+  if (state.viewOffset >= total - MAX_POINTS) state.liveMode = true;
+  renderChartsForTab(tab);
+}
+
+// ─── Drag-to-pan on chart canvas wraps ────────────────────────────────────
+function initChartDrag(tab, wrapIds) {
+  wrapIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let startX = 0, startOff = 0;
+
+    el.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      startX   = e.clientX;
+      startOff = scrollState[tab].viewOffset;
+      scrollState[tab].dragging = true;
+      scrollState[tab].liveMode = false;
+      el.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    el.addEventListener('mousemove', e => {
+      if (!scrollState[tab].dragging) return;
+      const dx    = e.clientX - startX;
+      const total = flightData.ts.length;
+      // 드래그 픽셀 → 데이터 포인트 비율 환산
+      const pxPerPt = el.offsetWidth / MAX_POINTS;
+      const dPts    = Math.round(-dx / pxPerPt);
+      scrollState[tab].viewOffset = Math.max(0, Math.min(total - MAX_POINTS, startOff + dPts));
+      if (scrollState[tab].viewOffset >= total - MAX_POINTS) scrollState[tab].liveMode = true;
+      renderChartsForTab(tab);
+    });
+    const stopDrag = () => {
+      if (scrollState[tab].dragging) {
+        scrollState[tab].dragging = false;
+        el.style.cursor = '';
+      }
+    };
+    el.addEventListener('mouseup',    stopDrag);
+    el.addEventListener('mouseleave', stopDrag);
+
+    // 터치 지원
+    el.addEventListener('touchstart', e => {
+      startX   = e.touches[0].clientX;
+      startOff = scrollState[tab].viewOffset;
+      scrollState[tab].dragging = true;
+      scrollState[tab].liveMode = false;
+    }, { passive: true });
+    el.addEventListener('touchmove', e => {
+      if (!scrollState[tab].dragging) return;
+      const dx    = e.touches[0].clientX - startX;
+      const total = flightData.ts.length;
+      const pxPerPt = el.offsetWidth / MAX_POINTS;
+      const dPts    = Math.round(-dx / pxPerPt);
+      scrollState[tab].viewOffset = Math.max(0, Math.min(total - MAX_POINTS, startOff + dPts));
+      if (scrollState[tab].viewOffset >= total - MAX_POINTS) scrollState[tab].liveMode = true;
+      renderChartsForTab(tab);
+    }, { passive: true });
+    el.addEventListener('touchend', () => { scrollState[tab].dragging = false; });
+
+    // 마우스 휠 스크롤
+    el.addEventListener('wheel', e => {
+      e.preventDefault();
+      scrollChartBy(tab, Math.round(e.deltaY * 0.5));
+    }, { passive: false });
+  });
+}
+
+// ─── Scroll thumb drag ────────────────────────────────────────────────────
+function initThumbDrag(tab) {
+  const thumb = document.getElementById('scroll-thumb-' + tab);
+  const track = document.getElementById('scroll-track-' + tab);
+  if (!thumb || !track) return;
+
+  let dragging = false, startX = 0, startOff = 0;
+
+  thumb.addEventListener('mousedown', e => {
+    dragging = true; startX = e.clientX;
+    startOff = scrollState[tab].viewOffset;
+    scrollState[tab].liveMode = false;
+    e.preventDefault(); e.stopPropagation();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const total    = flightData.ts.length;
+    const trackW   = track.offsetWidth;
+    const thumbW   = thumb.offsetWidth;
+    const maxThumb = trackW - thumbW;
+    const ratio    = (e.clientX - startX) / maxThumb;
+    const maxOff   = Math.max(0, total - MAX_POINTS);
+    scrollState[tab].viewOffset = Math.max(0, Math.min(maxOff, Math.round(startOff + ratio * maxOff)));
+    if (scrollState[tab].viewOffset >= maxOff) scrollState[tab].liveMode = true;
+    renderChartsForTab(tab);
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+
+  // Track 클릭으로 이동
+  track.addEventListener('click', e => {
+    if (e.target === thumb) return;
+    const rect   = track.getBoundingClientRect();
+    const pos    = (e.clientX - rect.left) / rect.width;
+    const total  = flightData.ts.length;
+    const maxOff = Math.max(0, total - MAX_POINTS);
+    scrollState[tab].viewOffset = Math.round(pos * maxOff);
+    scrollState[tab].liveMode   = (scrollState[tab].viewOffset >= maxOff);
+    renderChartsForTab(tab);
+  });
+}
+
+// ─────────────────────────────────────────────
+//  ROCKET CANVAS VISUALIZER — DPR-aware, auto-resize
+// ─────────────────────────────────────────────
+const canvas = document.getElementById('rocket-canvas');
+const rctx   = canvas.getContext('2d');
+
+// Sync canvas buffer size to CSS size × devicePixelRatio
+function syncCanvasSize() {
+  const dpr  = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const cw   = Math.round(rect.width  || 300);
+  const ch   = Math.round(rect.height || 220);
+  if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
+    canvas.width  = cw * dpr;
+    canvas.height = ch * dpr;
+    rctx.scale(dpr, dpr);   // scale once after resize
+  }
+}
+
+// Last known values so ResizeObserver can redraw
+let _lastPitch = 0, _lastRoll = 0, _lastAlt = 0, _lastPhase = 0;
+
+// Watch the container for size changes (handles any window/pane resize)
+const _ro = new ResizeObserver(() => {
+  syncCanvasSize();
+  drawRocket(_lastPitch, _lastRoll, _lastAlt, _lastPhase);
+});
+_ro.observe(canvas.parentElement);
+
+// Continuous rAF loop — needed for parachute sway + exhaust flicker
+(function rAFLoop() {
+  requestAnimationFrame(rAFLoop);
+  if (_lastPhase === 1 || _lastPhase === 3 || _lastPhase === 4) {
+    drawRocket(_lastPitch, _lastRoll, _lastAlt, _lastPhase);
+  }
+})();
+
+function drawRocket(pitch=0, roll=0, alt=0, phase=0) {
+  _lastPitch = pitch; _lastRoll = roll; _lastAlt = alt; _lastPhase = phase;
+  syncCanvasSize();
+
+  const dpr = window.devicePixelRatio || 1;
+  const W   = canvas.width  / dpr;
+  const H   = canvas.height / dpr;
+
+  rctx.clearRect(0, 0, W, H);
+
+  // ═══════════════════════════════════════════
+  // IBM Carbon background — #000000 + subtle grid
+  // ═══════════════════════════════════════════
+  rctx.fillStyle = '#000000';
+  rctx.fillRect(0, 0, W, H);
+
+  // Dot grid (Carbon data-vis style)
+  rctx.fillStyle = 'rgba(57,57,57,0.55)';
+  const DOT = 1, STEP = 24;
+  for (let x = STEP; x < W; x += STEP)
+    for (let y = STEP; y < H; y += STEP) {
+      rctx.beginPath(); rctx.arc(x, y, DOT*.5, 0, Math.PI*2); rctx.fill();
+    }
+
+  // Horizontal reference line (horizon) — Carbon border-subtle
+  rctx.strokeStyle = 'rgba(57,57,57,0.8)';
+  rctx.lineWidth = 1;
+  rctx.setLineDash([4, 4]);
+  rctx.beginPath(); rctx.moveTo(0, H/2); rctx.lineTo(W, H/2); rctx.stroke();
+  rctx.setLineDash([]);
+
+  const hasChutePhase = (phase === 3 || phase === 4); // Descent or Recovery
+
+  // ═══════════════════════════════════════════
+  // SAFE SCALE — rocket must never clip the panel
+  // Total logical height with parachute: nose(-64) → nozzle(+44) = 108u rocket
+  //   + parachute above nose adds ~80u when deployed
+  // We leave 8% padding top & bottom (16% total)
+  // ═══════════════════════════════════════════
+  const ROCKET_TOP    = -64;   // nose tip
+  const ROCKET_BOT    = +44;   // nozzle end
+  const CHUTE_TOP     = -64 - 80; // parachute canopy top
+  const FIN_HALF_W    = 22;    // widest point (fin tip)
+
+  const totalH = hasChutePhase ? (CHUTE_TOP * -1 + ROCKET_BOT) : (ROCKET_BOT - ROCKET_TOP);
+  const totalW = FIN_HALF_W * 2;
+
+  const pad   = 0.20; // 20% padding each side — rocket fills ~60% of panel
+  const maxSh = (H * (1 - pad*2)) / totalH;
+  const maxSw = (W * (1 - pad*2)) / totalW;
+  const S     = Math.min(maxSh, maxSw);  // uniform scale — always fits
+
+  // Vertical centering: place rocket body center between top padding and bottom padding
+  const visualMidY = hasChutePhase
+    ? (CHUTE_TOP + ROCKET_BOT) / 2   // midpoint of chute+rocket span
+    : (ROCKET_TOP + ROCKET_BOT) / 2; // midpoint of rocket span (-10)
+  const cx = W / 2;
+  const cy = H / 2 - visualMidY * S; // shift so visual mid hits canvas center
+
+  // ═══════════════════════════════════════════
+  // PITCH ROTATION CONTEXT
+  // ═══════════════════════════════════════════
+  const pitchRad = (pitch % 360) * Math.PI / 180;
+
+  rctx.save();
+  rctx.translate(cx, cy);
+  rctx.rotate(pitchRad);
+
+  // ═══════════════════════════════════════════
+  // PARACHUTE (phase 3 = Descent, phase 4 = Recovery)
+  // IBM Carbon: #f1c21b (warning/yellow) canopy, #8d8d8d lines
+  // ═══════════════════════════════════════════
+  if (hasChutePhase) {
+    const chuteY   = -64 * S;          // top of nose = attachment point
+    const chuteH   = 70 * S;           // canopy height above nose
+    const chuteW   = 52 * S;           // canopy half-width
+    const chuteTop = chuteY - chuteH;  // canopy apex
+
+    // Sway animation (subtle oscillation using time)
+    const sway = Math.sin(Date.now() * 0.0015) * 0.06;
+
+    // Canopy — filled half-ellipse, IBM yellow #f1c21b
+    rctx.save();
+    rctx.translate(0, chuteTop + chuteH / 2);
+    rctx.rotate(sway);
+
+    // Canopy fill (semi-transparent yellow)
+    rctx.beginPath();
+    rctx.ellipse(0, 0, chuteW, chuteH / 2, 0, Math.PI, 0);
+    rctx.fillStyle = 'rgba(241,194,27,0.18)';
+    rctx.fill();
+
+    // Canopy outline — Carbon warning yellow
+    rctx.strokeStyle = '#f1c21b';
+    rctx.lineWidth   = 1.5 * Math.max(1, S * 0.5);
+    rctx.beginPath();
+    rctx.ellipse(0, 0, chuteW, chuteH / 2, 0, Math.PI, 0);
+    rctx.stroke();
+
+    // Canopy ribs (Carbon style: 5 dividing lines)
+    rctx.strokeStyle = 'rgba(241,194,27,0.4)';
+    rctx.lineWidth   = 0.8 * Math.max(1, S * 0.3);
+    for (let i = -2; i <= 2; i++) {
+      const xOff = i * (chuteW / 2.5);
+      const yRib = -Math.sqrt(Math.max(0, 1 - (xOff/chuteW)**2)) * (chuteH/2);
+      rctx.beginPath(); rctx.moveTo(xOff, 0); rctx.lineTo(xOff, yRib); rctx.stroke();
+    }
+
+    // Suspension lines (8 lines from canopy rim → nose)
+    const lineCount = 8;
+    rctx.strokeStyle = '#8d8d8d';
+    rctx.lineWidth   = 0.7 * Math.max(1, S * 0.25);
+    for (let i = 0; i < lineCount; i++) {
+      const ang = Math.PI + (i / (lineCount-1)) * Math.PI;
+      const lx  = Math.cos(ang) * chuteW;
+      const ly  = Math.sin(ang) * (chuteH/2);
+      rctx.beginPath();
+      rctx.moveTo(lx, ly);
+      rctx.lineTo(0, chuteH / 2); // converge at nose attachment
+      rctx.stroke();
+    }
+
+    rctx.restore();
+  }
+
+  // ═══════════════════════════════════════════
+  // EXHAUST PLUME (phase 1 = Boost)
+  // IBM Carbon: #fa4d56 → #f1c21b → transparent
+  // ═══════════════════════════════════════════
+  if (phase === 1) {
+    const plLen = (18 + Math.random() * 14) * S;
+    const py0   = 44 * S;
+    const grad  = rctx.createLinearGradient(0, py0, 0, py0 + plLen);
+    grad.addColorStop(0,   'rgba(250,77,86,0.95)');
+    grad.addColorStop(0.3, 'rgba(241,194,27,0.7)');
+    grad.addColorStop(0.7, 'rgba(250,77,86,0.3)');
+    grad.addColorStop(1,   'rgba(250,77,86,0)');
+    rctx.fillStyle = grad;
+    rctx.beginPath();
+    rctx.moveTo(-5*S, py0);
+    rctx.quadraticCurveTo(-9*S, py0 + plLen*0.5, 0, py0 + plLen);
+    rctx.quadraticCurveTo( 9*S, py0 + plLen*0.5, 5*S, py0);
+    rctx.closePath();
+    rctx.fill();
+
+    // Inner bright core
+    const core = rctx.createLinearGradient(0, py0, 0, py0 + plLen*0.5);
+    core.addColorStop(0, 'rgba(255,255,255,0.6)');
+    core.addColorStop(1, 'rgba(241,194,27,0)');
+    rctx.fillStyle = core;
+    rctx.beginPath();
+    rctx.moveTo(-2*S, py0);
+    rctx.quadraticCurveTo(-3*S, py0 + plLen*0.3, 0, py0 + plLen*0.5);
+    rctx.quadraticCurveTo( 3*S, py0 + plLen*0.3, 2*S, py0);
+    rctx.closePath();
+    rctx.fill();
+  }
+
+  // ═══════════════════════════════════════════
+  // ROCKET BODY
+  // IBM Carbon: #f4f4f4 (text-primary) body, #c6c6c6 shading
+  // ═══════════════════════════════════════════
+
+  // Body tube
+  const bg = rctx.createLinearGradient(-9*S, 0, 9*S, 0);
+  bg.addColorStop(0,    '#6f6f6f');
+  bg.addColorStop(0.15, '#c6c6c6');
+  bg.addColorStop(0.45, '#f4f4f4');
+  bg.addColorStop(0.75, '#e0e0e0');
+  bg.addColorStop(1,    '#8d8d8d');
+  rctx.fillStyle = bg;
+  rctx.fillRect(-9*S, -40*S, 18*S, 84*S);
+
+  // Body border (Carbon border-strong)
+  rctx.strokeStyle = 'rgba(141,141,141,0.4)';
+  rctx.lineWidth   = 0.5;
+  rctx.strokeRect(-9*S, -40*S, 18*S, 84*S);
+
+  // ── IBM Carbon accent stripe ──
+  // Carbon interactive blue #0f62fe — 3px left edge stripe
+  rctx.fillStyle = '#0f62fe';
+  rctx.fillRect(-9*S, -40*S, 3*S, 50*S);
+
+  // ── Payload bay divider (dashed, Carbon border-subtle) ──
+  rctx.strokeStyle = '#525252';
+  rctx.lineWidth   = 0.8;
+  rctx.setLineDash([3, 3]);
+  rctx.beginPath(); rctx.moveTo(-9*S, -10*S); rctx.lineTo(9*S, -10*S); rctx.stroke();
+  rctx.setLineDash([]);
+
+  // ── Nose cone ──
+  const noseFill = rctx.createLinearGradient(-9*S, -64*S, 9*S, -40*S);
+  noseFill.addColorStop(0, '#e0e0e0');
+  noseFill.addColorStop(1, '#f4f4f4');
+  rctx.fillStyle = noseFill;
+  rctx.beginPath();
+  rctx.moveTo(-9*S, -40*S);
+  rctx.bezierCurveTo(-9*S, -52*S, -2*S, -62*S,  0,     -64*S);
+  rctx.bezierCurveTo( 2*S, -62*S,  9*S, -52*S,  9*S, -40*S);
+  rctx.closePath();
+  rctx.fill();
+  // Nose tip marker (Carbon text-helper)
+  rctx.fillStyle = '#8d8d8d';
+  rctx.beginPath(); rctx.arc(0, -63*S, 2*S, 0, Math.PI*2); rctx.fill();
+
+  // ── Fins (Carbon layer-02 #393939) ──
+  rctx.fillStyle = '#393939';
+  rctx.strokeStyle = '#525252';
+  rctx.lineWidth = 0.5;
+  // Left fin
+  rctx.beginPath();
+  rctx.moveTo(-9*S, 15*S); rctx.lineTo(-24*S, 44*S); rctx.lineTo(-9*S, 44*S);
+  rctx.closePath(); rctx.fill(); rctx.stroke();
+  // Right fin
+  rctx.beginPath();
+  rctx.moveTo( 9*S, 15*S); rctx.lineTo( 24*S, 44*S); rctx.lineTo( 9*S, 44*S);
+  rctx.closePath(); rctx.fill(); rctx.stroke();
+
+  // ── Engine nozzle ──
+  // Nozzle skirt (trapezoid)
+  const nozzFill = rctx.createLinearGradient(-7*S, 40*S, 7*S, 44*S);
+  nozzFill.addColorStop(0, '#525252');
+  nozzFill.addColorStop(1, '#393939');
+  rctx.fillStyle = nozzFill;
+  rctx.beginPath();
+  rctx.moveTo(-7*S, 40*S); rctx.lineTo(-5*S, 46*S);
+  rctx.lineTo( 5*S, 46*S); rctx.lineTo( 7*S, 40*S);
+  rctx.closePath(); rctx.fill();
+  // Nozzle throat (Carbon background #161616)
+  rctx.fillStyle = '#161616';
+  rctx.beginPath(); rctx.arc(0, 44*S, 3.5*S, 0, Math.PI*2); rctx.fill();
+  // Nozzle rim
+  rctx.strokeStyle = '#8d8d8d';
+  rctx.lineWidth = 0.8;
+  rctx.beginPath(); rctx.arc(0, 44*S, 3.5*S, 0, Math.PI*2); rctx.stroke();
+
+  rctx.restore(); // end rotation
+
+  // ═══════════════════════════════════════════
+  // ATTITUDE ARC (outside rotation — always upright)
+  // IBM Carbon interactive blue, subtle
+  // ═══════════════════════════════════════════
+  const arcR = Math.min(W * 0.42, H * 0.42);
+  if (Math.abs(pitchRad) > 0.01) {
+    rctx.strokeStyle = 'rgba(15,98,254,0.2)';
+    rctx.lineWidth   = 1;
+    rctx.setLineDash([3, 5]);
+    rctx.beginPath();
+    rctx.arc(cx, cy, arcR, -Math.PI/2, -Math.PI/2 + pitchRad, pitchRad < 0);
+    rctx.stroke();
+    rctx.setLineDash([]);
+
+    // Arrow tip
+    rctx.fillStyle = 'rgba(15,98,254,0.5)';
+    const arrowAng = -Math.PI/2 + pitchRad;
+    const ax = cx + arcR * Math.cos(arrowAng);
+    const ay = cy + arcR * Math.sin(arrowAng);
+    rctx.beginPath(); rctx.arc(ax, ay, 3, 0, Math.PI*2); rctx.fill();
+  }
+
+  // ═══════════════════════════════════════════
+  // HUD LABELS — IBM Plex Mono, Carbon text-helper #8d8d8d
+  // ═══════════════════════════════════════════
+  const fs = 10; // fixed 10px — Carbon body-compact-01
+  rctx.font = `400 ${fs}px 'IBM Plex Mono', monospace`;
+
+  // Phase badge (top-left)
+  const phaseLabels = ['PAD','BOOST','COAST','DESCENT','RECOVERY'];
+  const phaseColors = ['#8d8d8d','#fa4d56','#0f62fe','#f1c21b','#24a148'];
+  const pLabel = phaseLabels[Math.min(phase, 4)];
+  const pColor = phaseColors[Math.min(phase, 4)];
+  const badgeW = rctx.measureText(pLabel).width + 16;
+  rctx.fillStyle = 'rgba(22,22,22,0.85)';
+  rctx.fillRect(8, 8, badgeW, 18);
+  rctx.strokeStyle = pColor;
+  rctx.lineWidth = 1;
+  rctx.strokeRect(8, 8, badgeW, 18);
+  rctx.fillStyle = pColor;
+  rctx.textAlign = 'left';
+  rctx.fillText(pLabel, 16, 20);
+
+  // PITCH (bottom-left)
+  rctx.fillStyle = '#8d8d8d';
+  rctx.textAlign = 'left';
+  rctx.fillText(`PITCH  ${pitch.toFixed(1)}°`, 8, H - 8);
+
+  // ROLL (bottom-right)
+  rctx.textAlign = 'right';
+  rctx.fillText(`ROLL  ${roll.toFixed(1)}°`, W - 8, H - 8);
+
+  // ALT (top-right, Carbon interactive blue)
+  rctx.fillStyle = '#0f62fe';
+  rctx.textAlign = 'right';
+  rctx.fillText(`${alt.toFixed(0)} m`, W - 8, 20);
+}
+
+// ─────────────────────────────────────────────
+//  UI UPDATE
+// ─────────────────────────────────────────────
+let maxAlt = 0, maxSpd = 0, totalDist = 0;
+
+function updateUI(row) {
+  const t   = parseFloat(row.ts);
+  const alt = parseFloat(row.alt);
+  const lat = parseFloat(row.lat);
+  const lng = parseFloat(row.lng);
+  const pitch = parseFloat(row.pitch);
+  const roll  = parseFloat(row.roll);
+  const accel = parseFloat(row.accel);
+  const vvel  = alt - prevAlt;
+  prevAlt = alt;
+
+  const vel = Math.abs(vvel) / 0.2; // approx m/s
+  const phase = getPhase(t, alt, accel);
+
+  // ─ Text values ─
+  set('v-alt',   alt.toFixed(1));
+  set('v-pitch', pitch.toFixed(1));
+  set('v-roll',  roll.toFixed(1));
+  set('v-accel', accel.toFixed(2));
+  set('v-vel',   vel.toFixed(1));
+  set('v-lat',   lat.toFixed(6));
+  set('v-lng',   lng.toFixed(6));
+  set('hud-lat', lat.toFixed(6));
+  set('hud-lng', lng.toFixed(6));
+  set('hud-alt', alt.toFixed(1));
+
+  // ─ Distance from pad ─
+  const dist = haversine(LAUNCH_SITE[0], LAUNCH_SITE[1], lat, lng);
+  set('hud-dist', dist.toFixed(0));
+
+  // ─ Stats ─
+  if(alt > maxAlt) { maxAlt = alt; set('stat-maxalt', maxAlt.toFixed(1)+' m'); }
+  if(vel > maxSpd) { maxSpd = vel; set('stat-maxspd', maxSpd.toFixed(1)+' m/s'); }
+  totalDist += lastPos ? haversine(lastPos[0], lastPos[1], lat, lng) : 0;
+  lastPos = [lat, lng];
+  set('stat-dist', totalDist.toFixed(0)+' m');
+  set('stat-pts', ++stats.points);
+
+  // ─ Velocity bar ─
+  const velPct = Math.min(100, (vel / 200) * 100);
+  document.getElementById('speed-fill').style.width = velPct + '%';
+  set('speed-pct', vel.toFixed(0)+' m/s');
+
+  // ─ Bearing ─
+  if(lastPos) {
+    const bear = bearing(LAUNCH_SITE[0], LAUNCH_SITE[1], lat, lng);
+    set('v-bearing', bear.toFixed(0));
+  }
+
+  // ─ Map update ─
+  const pos = [lat, lng];
+  rocketMarker.setLatLng(pos);
+  trajectoryPath.addLatLng(pos);
+  accuracyCircle.setLatLng(pos);
+  if(autoTrack && demoIdx % 4 === 0) map.panTo(pos, { animate: true, duration: 0.5 });
+
+  // Prediction line (simple ballistic)
+  if(alt > 10 && vvel > 0) {
+    const timeToLand = (vel / 9.8) + Math.sqrt(2*alt/9.8);
+    const predLat = lat + (lat - LAUNCH_SITE[0]) * 0.3;
+    const predLng = lng + (lng - LAUNCH_SITE[1]) * 0.3;
+    predictionLine.setLatLngs([[lat, lng], [predLat, predLng]]);
+    set('landing-stat', `~${predLat.toFixed(5)}, ${predLng.toFixed(5)}`);
+    document.getElementById('landing-stat').style.color = 'var(--cds-support-warning)';
+  }
+
+  // Landing confirmation
+  if(alt < 1.0 && t > 10) {
+    landingMarker.setLatLng(pos).setOpacity(1);
+    set('landing-stat', `CONFIRMED  ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    document.getElementById('landing-stat').style.color = 'var(--cds-support-success)';
+    predictionLine.setLatLngs([]);
+    showToast('Landing Confirmed', `${lat.toFixed(5)}, ${lng.toFixed(5)}`, false);
+  }
+
+  // ─ Charts: 전체 데이터 저장 후 뷰포트 렌더링 ─
+  const lbl = t.toFixed(1);
+  const yaw  = parseFloat(row.yaw) || (roll * 0.3 + pitch * 0.1); // fallback for demo
+
+  // flightData에 모든 데이터 누적
+  flightData.ts.push(lbl);
+  flightData.alt.push(alt);
+  flightData.lat.push(lat);
+  flightData.lng.push(lng);
+  flightData.pitch.push(pitch);
+  flightData.roll.push(roll);
+  flightData.accel.push(accel);
+  flightData.vvel.push(vvel / 0.2);
+  flightData.yaw.push(yaw);
+  // MAX_HISTORY 초과 시 앞에서 제거
+  if (flightData.ts.length > MAX_HISTORY) {
+    Object.keys(flightData).forEach(k => flightData[k].shift());
+  }
+
+  // 현재 활성 탭 차트를 뷰포트 기반으로 렌더
+  renderChartsForTab(currentTab);
+
+  // Current values in chart headers
+  set('cur-lat',   lat.toFixed(6));
+  set('cur-lng',   lng.toFixed(6));
+  set('cur-galt',  alt.toFixed(1));
+  set('cur-alt2',  alt.toFixed(1));
+  set('cur-vvel',  (vvel/0.2).toFixed(1));
+  set('cur-accel', accel.toFixed(2));
+  set('cur-pitch', pitch.toFixed(1));
+  set('cur-roll',  roll.toFixed(1));
+  set('cur-yaw',   yaw.toFixed(1));
+
+  // ─ Mini-map sync ─
+  if (window._miniMap && window._miniMarker) {
+    window._miniMarker.setLatLng(pos);
+    window._miniTraj.setLatLngs(trajectoryPath.getLatLngs());
+    set('mini-lat', lat.toFixed(5));
+    set('mini-lng', lng.toFixed(5));
+    if (autoTrack) window._miniMap.panTo(pos, { animate: false });
+  }
+
+  // ─ Visualizer ─
+  // 강제 사출 상태면 phase를 항상 3(Descent)으로 고정
+  const renderPhase = window._ejectForced ? 3 : phase;
+  drawRocket(pitch, roll, alt, renderPhase);
+
+  // ─ Timer ─
+  const mm = Math.floor(t/60).toString().padStart(2,'0');
+  const ss = Math.floor(t%60).toString().padStart(2,'0');
+  const ms = Math.floor((t%1)*100).toString().padStart(2,'0');
+  set('timer-header', `T+${mm}:${ss}:${ms}`);
+
+  // ─ Flight Phase ─
+  setPhaseUI(phase);
+}
+
+function set(id, val) {
+  const el = document.getElementById(id);
+  if(el) el.textContent = val;
+}
+
+// ─────────────────────────────────────────────
+//  FLIGHT PHASE
+// ─────────────────────────────────────────────
+const PHASES = ['Pad','Boost','Coast','Descent','Recovery'];
+function getPhase(t, alt, accel) {
+  if (!window._ejectForced) {
+    if (t < 0.5)              return 0; // Pad
+    if (t <= 2.41)            return 1; // Boost
+    if (t <= 10.11)           return 2; // Coast
+    if (t <= 25.23)           return 3; // Descent (drogue)
+    if (t <= 43 && alt > 0)   return 3; // Descent (main chute)
+    return 4;                           // Recovery
+  }
+  return 3; // 강제 사출 시 항상 Descent
+}
+function setPhaseUI(phase) {
+  if(phase === currentPhase) return;
+  currentPhase = phase;
+  set('phase-name', PHASES[phase]);
+  for(let i=0;i<5;i++) {
+    const seg = document.getElementById('ph-'+i);
+    const lbl = document.getElementById('phl-'+i);
+    if(!seg) continue;
+    seg.className = 'phase-seg' + (i < phase ? ' done-phase' : i === phase ? ' active-phase' : '');
+    lbl.className = 'phase-lbl' + (i === phase ? ' active-phase' : '');
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DEMO DATA GENERATOR — 실제 비행 스펙 기반
+//  T=0s      점화 / 발사대
+//  T=2.41s   연소 종료 (Alt=90m)
+//  T=10.11s  최고점 Apogee (Alt=400m)
+//  T=11.14s  드로그 낙하산 사출 (Alt=395.52m)
+//  T=25.23s  메인 낙하산 사출 (Alt=150m)
+//  T=43s     착지
+// ─────────────────────────────────────────────
+function generateDemoPoint(i) {
+  const t = i * 0.2;
+
+  // ── 고도 프로파일 ──
+  let alt = 0, accel = 0, lat = LAUNCH_SITE[0], lng = LAUNCH_SITE[1];
+  let pitch = 0, roll = 0, yaw = 0;
+
+  // 드리프트 방향 (바람)
+  const windLat =  0.000012;
+  const windLng =  0.000020;
+
+  if (t < 0.5) {
+    // T−0: 발사대 대기
+    alt = 0; accel = 0;
+    pitch = 0; roll = 0; yaw = 0;
+    lat = LAUNCH_SITE[0]; lng = LAUNCH_SITE[1];
+
+  } else if (t <= 2.41) {
+    // 연소 구간: 가속도 42.94→56.35 m/s², pitch 거의 수직
+    const tb = t - 0.5;
+    const burnFrac = tb / 1.91;
+    accel = 42.94 + burnFrac * (56.35 - 42.94) + (Math.random()-0.5)*1.5;
+    alt = 90 * Math.pow(burnFrac, 1.6);
+    // 발사 시 약간의 진동
+    pitch = (Math.random()-0.5) * 2.5;
+    roll  = (Math.random()-0.5) * 3;
+    yaw   = (Math.random()-0.5) * 2;
+    lat = LAUNCH_SITE[0] + tb * windLat * 0.3;
+    lng = LAUNCH_SITE[1] + tb * windLng * 0.3;
+
+  } else if (t <= 10.11) {
+    // 코스팅: 감속, pitch 천천히 기울어짐 (바람에 의해)
+    const tc = t - 2.41;
+    const span = 10.11 - 2.41;
+    const frac = tc / span;
+    // 고도: 포물선 (90m → 400m)
+    alt = 90 + (400 - 90) * Math.sin(frac * Math.PI * 0.5);
+    accel = -9.8 * (1 - frac * 0.3) + (Math.random()-0.5) * 0.8;
+    // pitch: 수직(0°)에서 바람에 밀려 약 8° 기울어짐
+    pitch = frac * 8 + (Math.random()-0.5) * 1.5;
+    roll  = frac * 15 + (Math.random()-0.5) * 2;
+    yaw   = frac * 5  + (Math.random()-0.5) * 1.5;
+    lat = LAUNCH_SITE[0] + (2.41-0.5)*windLat*0.3 + tc * windLat;
+    lng = LAUNCH_SITE[1] + (2.41-0.5)*windLng*0.3 + tc * windLng;
+
+  } else if (t <= 11.14) {
+    // Apogee → 드로그 사출: 로켓이 tumble 후 노즈가 위로 복귀
+    const ta = t - 10.11;
+    const frac = ta / (11.14 - 10.11);
+    alt = 400 - (400 - 395.52) * frac;
+    accel = -9.8 + (Math.random()-0.5) * 2;
+    // tumble: 순간적으로 흔들리다가 낙하산이 노즈를 위로 당김 → pitch 0° 복귀
+    pitch = Math.sin(frac * Math.PI) * 25 + (Math.random()-0.5) * 5;
+    roll  = 8 + ta * 40 + (Math.random()-0.5) * 5;
+    yaw   = ta * 20 + (Math.random()-0.5) * 4;
+    const basePos = generateDemoPoint.apogeePos || [
+      LAUNCH_SITE[0] + (2.41-0.5)*windLat*0.3 + (10.11-2.41)*windLat,
+      LAUNCH_SITE[1] + (2.41-0.5)*windLng*0.3 + (10.11-2.41)*windLng
+    ];
+    generateDemoPoint.apogeePos = basePos;
+    lat = basePos[0] + ta * windLat * 0.5;
+    lng = basePos[1] + ta * windLng * 0.5;
+
+  } else if (t <= 25.23) {
+    // 드로그 낙하산: 노즈가 위, 노즐이 아래 — pitch ≈ 0° 안정
+    const td = t - 11.14;
+    const span = 25.23 - 11.14;
+    const frac = td / span;
+    alt = 395.52 - (395.52 - 150) * frac;
+    accel = -2.5 + (Math.random()-0.5) * 0.5;
+    // 노즈 위, 노즐 아래: pitch 0° ± 작은 흔들림 (낙하산이 노즈 당김)
+    pitch = Math.sin(td * 0.8) * 6 + (Math.random()-0.5) * 2;
+    roll  = Math.sin(td * 0.4) * 8 + (Math.random()-0.5) * 3;
+    yaw   = Math.sin(td * 0.5) * 5 + (Math.random()-0.5) * 2;
+    const base = generateDemoPoint.apogeePos || [LAUNCH_SITE[0], LAUNCH_SITE[1]];
+    lat = base[0] + (td + 1.03) * windLat * 0.5;
+    lng = base[1] + (td + 1.03) * windLng * 0.5;
+
+  } else if (t <= 43) {
+    // 메인 낙하산: pitch ≈ 0° 유지, 더 안정적
+    const tm = t - 25.23;
+    alt = Math.max(0, 150 - 8.17 * tm);
+    accel = -0.5 + (Math.random()-0.5) * 0.3;
+    pitch = Math.sin(tm * 0.4) * 3 + (Math.random()-0.5) * 1.5;
+    roll  = Math.sin(tm * 0.3) * 4 + (Math.random()-0.5) * 1.5;
+    yaw   = Math.sin(tm * 0.25) * 3 + (Math.random()-0.5) * 1.5;
+    const base = generateDemoPoint.apogeePos || [LAUNCH_SITE[0], LAUNCH_SITE[1]];
+    lat = base[0] + (tm + 14.09 + 1.03) * windLat * 0.4;
+    lng = base[1] + (tm + 14.09 + 1.03) * windLng * 0.4;
+
+  } else {
+    // 착지
+    alt = 0; accel = 0;
+    pitch = 0; roll = 0; yaw = 0;
+    const base = generateDemoPoint.apogeePos || [LAUNCH_SITE[0], LAUNCH_SITE[1]];
+    lat = base[0] + (43 - 25.23 + 14.09 + 1.03) * windLat * 0.4;
+    lng = base[1] + (43 - 25.23 + 14.09 + 1.03) * windLng * 0.4;
+  }
+
+  return {
+    ts: t,
+    alt:   +Math.max(0, alt).toFixed(2),
+    accel: +accel.toFixed(3),
+    lat:   +lat.toFixed(7),
+    lng:   +lng.toFixed(7),
+    pitch: +pitch.toFixed(2),
+    roll:  +roll.toFixed(2),
+    yaw:   +yaw.toFixed(2),
+  };
+}
+
+// ─────────────────────────────────────────────
+//  STREAM CONTROL
+// ─────────────────────────────────────────────
+function toggleStream() {
+  const btn = document.getElementById('start-btn');
+  const tag = document.getElementById('status-tag');
+
+  if(!isStreaming) {
+    isStreaming = true;
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg> STOP';
+    btn.className = 'cds--btn cds--btn--danger';
+    tag.className = 'cds--tag cds--tag--live'; tag.textContent = '● LIVE';
+    document.getElementById('gps-lock-tag').className = 'cds--tag cds--tag--green';
+    document.getElementById('gps-lock-tag').textContent = 'GPS LOCK';
+
+    fetch('/api/telemetry/reset', { method: 'POST' }).catch(() => {});
+    streamInterval = setInterval(async () => {
+      let p;
+      try {
+        const resp = await fetch('/api/telemetry/next');
+        if (!resp.ok) throw new Error('telemetry backend unavailable');
+        p = await resp.json();
+      } catch (err) {
+        p = generateDemoPoint(demoIdx++);
+      }
+      updateUI(p);
+      if(p.alt <= 0 && p.ts > 30) {
+        clearInterval(streamInterval);
+        isStreaming = false;
+        tag.className = 'cds--tag cds--tag--yellow'; tag.textContent = '● RECOVERY READY';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg> CONNECT';
+        btn.className = 'cds--btn cds--btn--primary';
+        showToast('Mission Complete', 'Rocket has landed. Ready for recovery.', false);
+      }
+    }, 200);
+
+  } else {
+    isStreaming = false;
+    clearInterval(streamInterval);
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg> CONNECT';
+    btn.className = 'cds--btn cds--btn--primary';
+    tag.className = 'cds--tag cds--tag--gray'; tag.textContent = '● IDLE';
+  }
+}
+
+function resetAll() { location.reload(); }
+
+function toggleTrack() {
+  autoTrack = !autoTrack;
+  const btn = document.getElementById('map-track-btn');
+  btn.className = autoTrack
+    ? 'cds--btn cds--btn--secondary'
+    : 'cds--btn cds--btn--ghost';
+  btn.style.borderColor = autoTrack ? 'var(--cds-interactive)' : '';
+}
+
+function panToRocket() {
+  const lat = parseFloat(document.getElementById('v-lat').textContent);
+  const lng = parseFloat(document.getElementById('v-lng').textContent);
+  if(!isNaN(lat)) map.flyTo([lat,lng], 16, { duration: 1 });
+}
+
+// ─────────────────────────────────────────────
+//  TABS
+// ─────────────────────────────────────────────
+function setTab(name) {
+  currentTab = name;
+  ['gps','alt','dyn'].forEach(t => {
+    document.getElementById('tab-'+t).classList.toggle('active', t === name);
+  });
+
+  const isChart = (name === 'alt' || name === 'dyn');
+
+  // Center panel: big map ↔ big chart
+  document.getElementById('map-container').style.display    = isChart ? 'none' : 'block';
+  const bcc = document.getElementById('big-chart-container');
+  bcc.style.display = isChart ? 'flex' : 'none';
+
+  // Which big chart inside center
+  document.getElementById('panel-alt-big').style.display = (name === 'alt') ? 'flex' : 'none';
+  document.getElementById('panel-dyn-big').style.display = (name === 'dyn') ? 'flex' : 'none';
+
+  // Right panel: small GPS charts ↔ mini-map
+  document.getElementById('panel-gps').style.display       = isChart ? 'none' : 'flex';
+  document.getElementById('mini-map-panel').style.display  = isChart ? 'flex' : 'none';
+
+  // Init mini-map on first show
+  if (isChart && !window._miniMapInited) {
+    window._miniMapInited = true;
+    window._miniMap = L.map('mini-map', {
+      center: LAUNCH_SITE, zoom: 13,
+      zoomControl: false, attributionControl: false
+    });
+    L.tileLayer(
+      'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      { maxZoom: 17 }
+    ).addTo(window._miniMap);
+    // Mirror the trajectory
+    window._miniTraj = L.polyline(trajectoryPath.getLatLngs(), {
+      color: '#fa4d56', weight: 2, opacity: 0.9
+    }).addTo(window._miniMap);
+    window._miniMarker = L.circleMarker(
+      rocketMarker.getLatLng(),
+      { radius: 5, color: '#0f62fe', fillColor: '#0f62fe', fillOpacity: 1, weight: 2 }
+    ).addTo(window._miniMap);
+  }
+
+  // Trigger chart resize after layout change
+  setTimeout(() => {
+    Object.values(charts).forEach(c => c && c.resize());
+    if (window._miniMap) window._miniMap.invalidateSize();
+    // 탭 전환 후 해당 탭 차트 렌더
+    renderChartsForTab(name);
+  }, 60);
+}
+
+// ─────────────────────────────────────────────
+//  SHARE
+// ─────────────────────────────────────────────
+function openSharePanel() {
+  generateShareLink();
+  document.getElementById('share-panel').scrollIntoView({ behavior: 'smooth' });
+}
+
+function generateShareLink() {
+  const lat = document.getElementById('v-lat').textContent;
+  const lng = document.getElementById('v-lng').textContent;
+  const link = `${window.location.href.split('?')[0]}?lat=${lat}&lng=${lng}&demo=1`;
+  document.getElementById('share-url-text').textContent = link;
+  showToast('Share Link Ready', 'Click the URL to copy', false);
+}
+
+function copyShareLink() {
+  const url = document.getElementById('share-url-text').textContent;
+  if(url.includes('Generate')) return;
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('Copied!', 'Share link copied to clipboard', false);
+  });
+}
+
+function copyCoords() {
+  const lat = document.getElementById('v-lat').textContent;
+  const lng = document.getElementById('v-lng').textContent;
+  navigator.clipboard.writeText(`${lat}, ${lng}`).then(() => {
+    showToast('Coordinates Copied', `${lat}, ${lng}`, false);
+  });
+}
+
+// ─────────────────────────────────────────────
+//  TOAST NOTIFICATION
+// ─────────────────────────────────────────────
+let toastTimer;
+function showToast(title, sub, warn=false) {
+  const el = document.getElementById('toast');
+  set('toast-title', title);
+  set('toast-sub', sub);
+  el.className = 'cds--inline-notification show' + (warn ? ' warn' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 3500);
+}
+function hideToast() {
+  document.getElementById('toast').classList.remove('show');
+}
+
+// ─────────────────────────────────────────────
+//  낙하산 강제 사출
+// ─────────────────────────────────────────────
+function openEjectModal() {
+  document.getElementById('eject-status-line').textContent = '';
+  document.getElementById('eject-confirm-btn').disabled = false;
+  document.getElementById('eject-confirm-btn').textContent = '예 — 사출 실행';
+  document.getElementById('eject-confirm-btn').style.opacity = '1';
+  const overlay = document.getElementById('eject-modal-overlay');
+  overlay.style.display = 'flex';
+}
+
+function closeEjectModal() {
+  document.getElementById('eject-modal-overlay').style.display = 'none';
+}
+
+async function confirmEject() {
+  const btn = document.getElementById('eject-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = '실행 중...';
+  btn.style.opacity = '0.6';
+
+  try {
+    document.getElementById('eject-status-line').textContent = 'Sending PYRO command...';
+    const resp = await fetch('/api/pyro/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DEPLOY' })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      throw new Error(data.message || 'PYRO command failed');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '실행';
+    btn.style.opacity = '1';
+    document.getElementById('eject-status-line').textContent = err.message;
+    showToast('PYRO command failed', err.message, true);
+    return;
+  }
+
+  // Server-side PYRO command succeeded; update the local visualization state.
+
+  // 강제 사출 플래그 — updateUI가 phase를 덮어쓰지 못하도록 잠금
+  window._ejectForced = true;
+
+  // 즉시 낙하산 페이즈로 전환 + rAF 루프가 계속 렌더
+  _lastPhase = 3;
+  drawRocket(_lastPitch, _lastRoll, _lastAlt, 3);
+
+  // 사출 버튼 상태 변경 (눌린 상태 표시)
+  document.getElementById('eject-btn').style.background = '#198038';
+  document.getElementById('eject-btn').style.borderColor = '#24a148';
+  document.getElementById('eject-btn').style.color = '#fff';
+  document.getElementById('eject-btn').style.animation = 'none';
+  document.getElementById('eject-btn').innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M8 1 L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M4 6 L8 1 L12 6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+      <path d="M3 10 Q8 7 13 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <ellipse cx="8" cy="13" rx="5" ry="2.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+      <line x1="3" y1="10" x2="3" y2="13" stroke="currentColor" stroke-width="1"/>
+      <line x1="13" y1="10" x2="13" y2="13" stroke="currentColor" stroke-width="1"/>
+    </svg>
+    🪂 사출 완료`;
+
+  document.getElementById('eject-status-line').textContent
+    = '✓ 사출 명령 전송 완료 — ' + new Date().toLocaleTimeString('ko-KR');
+
+  showToast('🪂 낙하산 사출 명령 전송', '파이로 장치 실행됨', true);
+
+  // 2초 후 모달 자동 닫기
+  setTimeout(() => closeEjectModal(), 2000);
+}
+
+// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2)*Math.sin(Δφ/2) + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)*Math.sin(Δλ/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function bearing(lat1, lon1, lat2, lon2) {
+  const y = Math.sin((lon2-lon1)*Math.PI/180) * Math.cos(lat2*Math.PI/180);
+  const x = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180)
+            - Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos((lon2-lon1)*Math.PI/180);
+  return (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+}
+
+// ─────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────
+window.onload = () => {
+  syncCanvasSize();
+  drawRocket(0, 0, 0, 0);
+
+  // ─ Chart scroll / drag init ─
+  initChartDrag('gps', ['wrap-lat', 'wrap-lng', 'wrap-galt']);
+  initChartDrag('alt', ['wrap-alt', 'wrap-vvel']);
+  initChartDrag('dyn', ['wrap-accel', 'wrap-pitch', 'wrap-roll', 'wrap-yaw']);
+  initThumbDrag('gps');
+  initThumbDrag('alt');
+  initThumbDrag('dyn');
+
+  // 버튼 이벤트
+  document.getElementById('scroll-btn-gps-left').addEventListener('click',  () => scrollChartBy('gps', -Math.round(MAX_POINTS * 0.25)));
+  document.getElementById('scroll-btn-gps-right').addEventListener('click', () => scrollChartBy('gps',  Math.round(MAX_POINTS * 0.25)));
+  document.getElementById('scroll-btn-alt-left').addEventListener('click',  () => scrollChartBy('alt', -Math.round(MAX_POINTS * 0.25)));
+  document.getElementById('scroll-btn-alt-right').addEventListener('click', () => scrollChartBy('alt',  Math.round(MAX_POINTS * 0.25)));
+  document.getElementById('scroll-btn-dyn-left').addEventListener('click',  () => scrollChartBy('dyn', -Math.round(MAX_POINTS * 0.25)));
+  document.getElementById('scroll-btn-dyn-right').addEventListener('click', () => scrollChartBy('dyn',  Math.round(MAX_POINTS * 0.25)));
+
+  document.getElementById('scroll-live-gps').addEventListener('click', () => setScrollLive('gps', true));
+  document.getElementById('scroll-live-alt').addEventListener('click', () => setScrollLive('alt', true));
+  document.getElementById('scroll-live-dyn').addEventListener('click', () => setScrollLive('dyn', true));
+
+  // Check URL params for shared view
+  const params = new URLSearchParams(window.location.search);
+  if(params.get('demo') === '1') {
+    showToast('Shared View', 'Viewing shared mission data', false);
+    toggleStream();
+  }
+
+  // Animate map into place
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 100);
+};
+</script>
+</body>
+</html>
