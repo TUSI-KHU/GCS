@@ -154,6 +154,16 @@ class PyroUplink:
     def is_open(self) -> bool:
         return self.simulate or (self._ser is not None and self._ser.is_open)
 
+    def read_frames(self, max_bytes: int = 1024):
+        """Read currently buffered frames from the owned serial port."""
+        if self.simulate or self._ser is None or not self._ser.is_open:
+            return []
+        with self._lock:
+            chunk = self._ser.read(max_bytes)
+            if not chunk:
+                return []
+            return self._parser.feed_bytes(chunk)
+
     # ── 시퀀스 번호 ────────────────────────────
     def _make_nonce(self, command_seq: int) -> int:
         # receiver/src/main.cpp startCommand 와 동일한 방식

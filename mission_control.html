@@ -1901,7 +1901,7 @@ function updateUI(row) {
   prevAlt = alt;
 
   const vel = Math.abs(vvel) / 0.2; // approx m/s
-  const phase = getPhase(t, alt, accel);
+  const phase = getPhase(t, alt, accel, row);
 
   // ─ Text values ─
   set('v-alt',   alt.toFixed(1));
@@ -2030,7 +2030,10 @@ function set(id, val) {
 //  FLIGHT PHASE
 // ─────────────────────────────────────────────
 const PHASES = ['Pad','Boost','Coast','Descent','Recovery'];
-function getPhase(t, alt, accel) {
+function getPhase(t, alt, accel, row={}) {
+  if ((row.source || '').startsWith('hardware') && !window._ejectForced) {
+    return Number.isInteger(row.phase) ? row.phase : 0;
+  }
   if (!window._ejectForced) {
     if (t < 0.5)              return 0; // Pad
     if (t <= 2.41)            return 1; // Boost
@@ -2197,7 +2200,19 @@ function toggleStream() {
         if (!resp.ok) throw new Error('telemetry backend unavailable');
         p = await resp.json();
       } catch (err) {
-        p = generateDemoPoint(demoIdx++);
+        clearInterval(streamInterval);
+        isStreaming = false;
+        tag.className = 'cds--tag cds--tag--red';
+        tag.textContent = 'LINK OFFLINE';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg> CONNECT';
+        btn.className = 'cds--btn cds--btn--primary';
+        showToast('Telemetry Offline', 'Hardware telemetry backend is not connected.', true);
+        return;
+      }
+      if (p.source === 'hardware_waiting') {
+        tag.className = 'cds--tag cds--tag--yellow';
+        tag.textContent = 'WAITING PACKET';
+        return;
       }
       updateUI(p);
       if(p.alt <= 0 && p.ts > 30) {
