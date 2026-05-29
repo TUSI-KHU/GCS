@@ -5,6 +5,7 @@ import argparse
 import csv
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -172,6 +173,14 @@ class HardwareTelemetry:
         self.alt = 0.0
         self.base_boot_ms: int | None = None
         self.session_started_at: float | None = None
+        self.state = "UNKNOWN"
+        self.state_code: int | None = None
+        self.status_word: str | None = None
+        self.gps_fix = False
+        self.satellites: int | None = None
+        self.hdop: float | None = None
+        self.rssi: int | None = None
+        self.snr: float | None = None
 
     def reset(self) -> None:
         with self.lock:
@@ -190,6 +199,14 @@ class HardwareTelemetry:
             self.alt = 0.0
             self.base_boot_ms = None
             self.session_started_at = None
+            self.state = "UNKNOWN"
+            self.state_code = None
+            self.status_word = None
+            self.gps_fix = False
+            self.satellites = None
+            self.hdop = None
+            self.rssi = None
+            self.snr = None
 
     def waiting_point(self) -> dict:
         with self.lock:
@@ -208,6 +225,14 @@ class HardwareTelemetry:
             row["fast_count"] = self.fast_count
             row["gps_count"] = self.gps_count
             row["control_count"] = self.control_count
+            row["state"] = self.state
+            row["state_code"] = self.state_code
+            row["status_word"] = self.status_word
+            row["gps_fix"] = self.gps_fix
+            row["satellites"] = self.satellites
+            row["hdop"] = self.hdop
+            row["rssi"] = self.rssi
+            row["snr"] = self.snr
             return row
 
     def disconnected_point(self) -> dict:
@@ -242,7 +267,11 @@ class HardwareTelemetry:
         if link is None or link.simulate or not link.is_open():
             return None
 
-        frames = link.read_frames(4096)
+        if hasattr(link, "read_frames_and_lines"):
+            frames, lines = link.read_frames_and_lines(4096)
+        else:
+            frames = link.read_frames(4096)
+            lines = []
         new_telemetry = False
         with self.lock:
             for frame in frames:
@@ -255,6 +284,10 @@ class HardwareTelemetry:
                 elif frame.msg_type == p.MESSAGE_CONTROL:
                     self.control_count += 1
 
+            for line in lines:
+                if self._apply_receiver_line(line):
+                    new_telemetry = True
+
             if self.latest is None or not new_telemetry:
                 return None
             row = dict(self.latest)
@@ -263,7 +296,134 @@ class HardwareTelemetry:
             row["fast_count"] = self.fast_count
             row["gps_count"] = self.gps_count
             row["control_count"] = self.control_count
+            row["state"] = self.state
+            row["state_code"] = self.state_code
+            row["status_word"] = self.status_word
+            row["gps_fix"] = self.gps_fix
+            row["satellites"] = self.satellites
+            row["hdop"] = self.hdop
+            row["rssi"] = self.rssi
+            row["snr"] = self.snr
             return row
+
+    def _apply_receiver_line(self, line: str) -> bool:
+        if line.startswith("rx type=FAST "):
+            return self._apply_receiver_fast_line(line)
+        if line.startswith("rx type=GPS "):
+            return self._apply_receiver_gps_line(line)
+        if line.startswith("rx type=CONTROL "):
+            self.control_count += 1
+        return False
+
+    def _apply_receiver_fast_line(self, line: str) -> bool:
+        match = re.search(
+            r"seq=(?P<seq>\d+).*?boot_ms=(?P<boot_ms>\d+).*?"
+            r"state=(?P<state>\S+).*?state_code=(?P<state_code>\d+).*?"
+            r"status=(?P<status>0x[0-9A-Fa-f]+).*?"
+            r"accel_g=\((?P<accel>[^)]*)\).*?"
+            r"gyro_dps=\((?P<gyro>[^)]*)\).*?"
+            r"batt_mv=(?P<batt>\d+).*?"
+            r"health=(?P<health>\S+).*?"
+            r"rssi=(?P<rssi>-?\d+).*?snr=(?P<snr>-?\d+(?:\.\d+)?)",
+            line,
+        )
+        if match is None:
+            return False
+        accel_parts = self._parse_float_tuple(match.group("accel"), 3)
+        gyro_parts = self._parse_float_tuple(match.group("gyro"), 3)
+        if accel_parts is None or gyro_parts is None:
+            return False
+
+        boot_ms = int(match.group("boot_ms"))
+        if self.base_boot_ms is None:
+            self.base_boot_ms = boot_ms
+        session_s = max(0.0, (boot_ms - self.base_boot_ms) / 1000.0)
+        ax, ay, az = accel_parts
+        gx, gy, gz = gyro_parts
+        accel = math.sqrt(ax * ax + ay * ay + az * az)
+        pitch = math.degrees(math.atan2(ax, math.sqrt(ay * ay + az * az)))
+        roll = math.degrees(math.atan2(ay, az)) if az != 0.0 else 0.0
+
+        self.packet_id += 1
+        self.fast_count += 1
+        self.last_fast_seq = int(match.group("seq"))
+        self.last_fast_payload_hex = line
+        self.last_packet_at = time.monotonic()
+        self.state = match.group("state")
+        self.state_code = int(match.group("state_code"))
+        self.status_word = match.group("status")
+        self.rssi = int(match.group("rssi"))
+        self.snr = float(match.group("snr"))
+        self.latest = {
+            "ts": round(session_s, 2),
+            "alt": round(self.alt, 2),
+            "lat": round(self.lat, 7),
+            "lng": round(self.lng, 7),
+            "pitch": round(pitch, 2),
+            "roll": round(roll, 2),
+            "yaw": round(gz, 2),
+            "accel": round(accel, 3),
+            "gyro_x": round(gx, 2),
+            "gyro_y": round(gy, 2),
+            "gyro_z": round(gz, 2),
+            "batt_mv": int(match.group("batt")),
+            "health": match.group("health"),
+        }
+        return True
+
+    def _apply_receiver_gps_line(self, line: str) -> bool:
+        match = re.search(
+            r"seq=(?P<seq>\d+).*?fix=(?P<fix>yes|no).*?"
+            r"lat_deg=(?P<lat>-?\d+(?:\.\d+)?).*?"
+            r"lon_deg=(?P<lng>-?\d+(?:\.\d+)?).*?"
+            r"alt_m=(?P<alt>-?\d+(?:\.\d+)?).*?"
+            r"speed_mps=(?P<speed>-?\d+(?:\.\d+)?).*?"
+            r"course_deg=(?P<course>-?\d+(?:\.\d+)?).*?"
+            r"hdop=(?P<hdop>-?\d+(?:\.\d+)?).*?"
+            r"sats=(?P<sats>\d+).*?"
+            r"rssi=(?P<rssi>-?\d+).*?snr=(?P<snr>-?\d+(?:\.\d+)?)",
+            line,
+        )
+        if match is None:
+            return False
+
+        self.packet_id += 1
+        self.gps_count += 1
+        self.last_gps_seq = int(match.group("seq"))
+        self.last_gps_payload_hex = line
+        self.last_packet_at = time.monotonic()
+        self.gps_fix = match.group("fix") == "yes"
+        self.satellites = int(match.group("sats"))
+        self.hdop = float(match.group("hdop"))
+        self.rssi = int(match.group("rssi"))
+        self.snr = float(match.group("snr"))
+
+        lat = float(match.group("lat"))
+        lng = float(match.group("lng"))
+        if self.gps_fix or lat != 0.0 or lng != 0.0:
+            self.lat = lat
+            self.lng = lng
+            self.alt = float(match.group("alt"))
+        if self.latest is not None:
+            self.latest["lat"] = round(self.lat, 7)
+            self.latest["lng"] = round(self.lng, 7)
+            self.latest["alt"] = round(self.alt, 2)
+            self.latest["gps_fix"] = self.gps_fix
+            self.latest["satellites"] = self.satellites
+            self.latest["hdop"] = self.hdop
+            self.latest["speed_mps"] = float(match.group("speed"))
+            self.latest["course_deg"] = float(match.group("course"))
+        return True
+
+    @staticmethod
+    def _parse_float_tuple(text: str, expected_len: int) -> tuple[float, ...] | None:
+        try:
+            values = tuple(float(part.strip()) for part in text.split(","))
+        except ValueError:
+            return None
+        if len(values) != expected_len:
+            return None
+        return values
 
     def _apply_fast(self, seq: int, payload: bytes) -> None:
         if len(payload) != p.FAST_PAYLOAD_LEN:
@@ -334,7 +494,13 @@ def telemetry_next():
         return jsonify(row)
 
     if uplink is None or not uplink.is_open():
-        return jsonify(hardware_telemetry.disconnected_point()), 503
+        if uplink is not None:
+            try:
+                uplink.open()
+            except RuntimeError:
+                pass
+        if uplink is None or not uplink.is_open():
+            return jsonify(hardware_telemetry.disconnected_point())
 
     row = hardware_telemetry.next_point(uplink)
     if row is not None:

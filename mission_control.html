@@ -1914,6 +1914,15 @@ function updateUI(row) {
   set('hud-lat', lat.toFixed(6));
   set('hud-lng', lng.toFixed(6));
   set('hud-alt', alt.toFixed(1));
+  const gpsTag = document.getElementById('gps-lock-tag');
+  if (gpsTag && (row.source || '').startsWith('hardware')) {
+    const gpsFix = row.gps_fix === true || row.gps_fix === 'true';
+    gpsTag.className = gpsFix ? 'cds--tag cds--tag--green' : 'cds--tag cds--tag--yellow';
+    gpsTag.textContent = gpsFix ? 'GPS LOCK' : 'GPS WAIT';
+    if (Number.isFinite(Number(row.satellites))) {
+      gpsTag.textContent += ` ${Number(row.satellites)} SAT`;
+    }
+  }
 
   // ─ Distance from pad ─
   const dist = haversine(LAUNCH_SITE[0], LAUNCH_SITE[1], lat, lng);
@@ -2190,7 +2199,7 @@ function toggleStream() {
     btn.className = 'cds--btn cds--btn--danger';
     tag.className = 'cds--tag cds--tag--live'; tag.textContent = '● LIVE';
     document.getElementById('gps-lock-tag').className = 'cds--tag cds--tag--green';
-    document.getElementById('gps-lock-tag').textContent = 'GPS LOCK';
+    document.getElementById('gps-lock-tag').textContent = 'GPS —';
 
     fetch('/api/telemetry/reset', { method: 'POST' }).catch(() => {});
     streamInterval = setInterval(async () => {
@@ -2212,6 +2221,11 @@ function toggleStream() {
       if (p.source === 'hardware_waiting') {
         tag.className = 'cds--tag cds--tag--yellow';
         tag.textContent = 'WAITING PACKET';
+        return;
+      }
+      if (p.source === 'hardware_disconnected') {
+        tag.className = 'cds--tag cds--tag--red';
+        tag.textContent = 'SERIAL WAIT';
         return;
       }
       updateUI(p);

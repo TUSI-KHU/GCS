@@ -124,6 +124,7 @@ class PyroUplink:
         self._next_command_seq = 1
         self._next_frame_seq = 0
         self._parser = p.FrameParser()
+        self._line_buffer = bytearray()
 
     # ── 연결 관리 ──────────────────────────────
     def open(self):
@@ -141,7 +142,11 @@ class PyroUplink:
             raise RuntimeError(
                 "Teensy 시리얼 포트를 못 찾음. USB 케이블 확인하거나 port 를 직접 지정해줘."
             )
-        self._ser = serial.Serial(self.port, self.baud, timeout=0.05)
+        try:
+            self._ser = serial.Serial(self.port, self.baud, timeout=0.05)
+        except serial.SerialException as exc:
+            self._ser = None
+            raise RuntimeError(f"시리얼 포트를 열 수 없음: {exc}") from exc
         self._ser.dtr = True
         time.sleep(0.3)                 # Teensy 가 깨어날 시간
         self._ser.reset_input_buffer()
@@ -156,13 +161,33 @@ class PyroUplink:
 
     def read_frames(self, max_bytes: int = 1024):
         """Read currently buffered frames from the owned serial port."""
+        frames, _lines = self.read_frames_and_lines(max_bytes)
+        return frames
+
+    def read_frames_and_lines(self, max_bytes: int = 1024):
+        """Read buffered binary frames and receiver text lines from the serial port."""
         if self.simulate or self._ser is None or not self._ser.is_open:
-            return []
+            return [], []
         with self._lock:
-            chunk = self._ser.read(max_bytes)
+            try:
+                chunk = self._ser.read(max_bytes)
+            except serial.SerialException:
+                self.close()
+                return [], []
             if not chunk:
-                return []
-            return self._parser.feed_bytes(chunk)
+                return [], []
+            frames = self._parser.feed_bytes(chunk)
+            lines = []
+            self._line_buffer.extend(chunk)
+            while b"\n" in self._line_buffer:
+                raw, _, rest = self._line_buffer.partition(b"\n")
+                self._line_buffer = bytearray(rest)
+                text = raw.rstrip(b"\r").decode("utf-8", "replace").strip()
+                if text:
+                    lines.append(text)
+            if len(self._line_buffer) > 2048:
+                self._line_buffer.clear()
+            return frames, lines
 
     # ── 시퀀스 번호 ────────────────────────────
     def _make_nonce(self, command_seq: int) -> int:
