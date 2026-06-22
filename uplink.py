@@ -113,17 +113,22 @@ class PyroUplink:
     """
 
     def __init__(self, port: str | None = None, baud: int = SERIAL_BAUD,
-                 auth_key: bytes = p.AUTH_KEY, simulate: bool = False):
+                 auth_key: bytes = p.AUTH_KEY,
+                 vehicle_id: int = p.VEHICLE_ID,
+                 simulate: bool = False):
         self.port = port
         self.baud = baud
         self.auth_key = auth_key
+        self.vehicle_id = vehicle_id
         self.simulate = simulate
         self._ser = None
         self._lock = threading.Lock()       # 동시 명령 방지
         # 시퀀스 카운터 (receiver 펌웨어의 nextCommandSeq / uplinkFrameSeq)
         self._next_command_seq = 1
         self._next_frame_seq = 0
-        self._parser = p.FrameParser()
+        self._parser = p.FrameParser(vehicle_id=vehicle_id,
+                                     direction=p.FRAME_DIRECTION_DOWNLINK,
+                                     key=auth_key)
         self._line_buffer = bytearray()
 
     # ── 연결 관리 ──────────────────────────────
@@ -201,7 +206,7 @@ class PyroUplink:
         강제 사출 명령을 보내고, 로켓의 ACK 를 받을 때까지 (재전송하며) 기다림.
 
         반환값: DeployResult
-          - success=True  : 로켓이 ACK_EXECUTED + RESULT_OK 로 응답 (실제 사출 확인)
+          - success=True  : 로켓이 recovery 실행 경로의 ACK_EXECUTED + RESULT_OK 로 응답
           - success=False : 거부됐거나, 8회 재전송에도 응답 없음
         """
         with self._lock:                # 버튼 연타 등 동시 호출 방어
@@ -235,7 +240,11 @@ class PyroUplink:
             return result
 
         # ── 실제 LoRa 송신 ──
-        frame = p.build_force_deploy_frame(command_seq, frame_seq, nonce, self.auth_key)
+        frame = p.build_force_deploy_frame(command_seq,
+                                           frame_seq,
+                                           nonce,
+                                           self.auth_key,
+                                           self.vehicle_id)
         self._parser.reset()
 
         deadline = time.monotonic() + timeout_s
@@ -258,7 +267,7 @@ class PyroUplink:
             chunk = self._ser.read(256)
             if chunk:
                 for parsed in self._parser.feed_bytes(chunk):
-                    ack = self._handle_frame(parsed, command_seq)
+                    ack = self._handle_frame(parsed, command_seq, nonce)
                     if ack is None:
                         continue
                     stage, res, reason, fstate = ack
@@ -277,7 +286,7 @@ class PyroUplink:
                     if stage == p.ACK_EXECUTED and res == p.RESULT_OK:
                         result.success = True
                         result.message = (
-                            f"강제 사출 실행 확인 (EXECUTED/OK, {attempts}회 송신)"
+                            f"recovery 실행 ACK 확인 (EXECUTED/OK, {attempts}회 송신)"
                         )
                         return result
 
@@ -314,7 +323,7 @@ class PyroUplink:
             )
         return result
 
-    def _handle_frame(self, frame: p.ParsedFrame, expected_seq: int):
+    def _handle_frame(self, frame: p.ParsedFrame, expected_seq: int, expected_nonce: int):
         """
         받은 프레임이 우리가 기다리는 ACK 인지 확인.
         맞으면 (stage, result, reason, flight_state) 튜플, 아니면 None.
@@ -332,6 +341,8 @@ class PyroUplink:
             return None
         if ctrl.command_seq != expected_seq:
             return None      # 다른 명령에 대한 ACK
+        if ctrl.nonce != expected_nonce:
+            return None
         stage = ctrl.auth_or_ack[0]
         res = ctrl.auth_or_ack[1]
         reason = ctrl.auth_or_ack[2]

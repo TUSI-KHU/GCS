@@ -2,38 +2,47 @@
 """
 nura/protocol.py
 ================
-NURA V1 Lite 통신 프로토콜의 Python 포팅.
+NURA V2 Lite 인증 통신 프로토콜의 Python 포팅.
 
 원본: protocol/include/nura_protocol_v1_lite.h (C++)
 이 파일은 그 C++ 헤더와 "바이트 단위로 동일한" 프레임을 만들어내도록 작성됐어.
 로켓(sender) 펌웨어가 SipHash 인증 태그를 검사하기 때문에, 1비트라도 다르면
 명령이 통째로 거부(REJECT_AUTH_TAG_MISMATCH)돼. 그래서 정확도가 생명임.
 
-프레임 구조 (총 7 + payloadLen 바이트):
+프레임 구조 (총 19 + payloadLen 바이트):
   [0]      Sync0   = 0xAA
   [1]      Sync1   = 0x55
-  [2]      VerType = (version<<4) | type   (version=1)
-  [3..4]   Seq     (little-endian u16)
-  [5..N]   Payload
-  [N+1..2] CRC16-CCITT-FALSE (little-endian u16, VerType~Payload 끝까지 계산)
+  [2]      VerType = (version<<4) | type   (version=2)
+  [3..6]   Vehicle ID (little-endian u32)
+  [7..8]   Seq (little-endian u16)
+  [9..N]   Payload
+  [N+1..8] SipHash-2-4 frame authentication tag
+  [N+9..10] CRC16-CCITT-FALSE
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+import os
 
 # ─────────────────────────────────────────────
 #  상수 (C++ 헤더의 static constexpr 값들)
 # ─────────────────────────────────────────────
 SYNC0 = 0xAA
 SYNC1 = 0x55
-VERSION = 1
+VERSION = 2
 
 FAST_PAYLOAD_LEN = 22
 GPS_PAYLOAD_LEN = 18
 CONTROL_PAYLOAD_LEN = 24
-FRAME_OVERHEAD = 7                       # sync(2) + vertype(1) + seq(2) + crc(2)
+FRAME_HEADER_LEN = 9
+FRAME_AUTH_TAG_LEN = 8
+FRAME_CRC_LEN = 2
+FRAME_OVERHEAD = FRAME_HEADER_LEN + FRAME_AUTH_TAG_LEN + FRAME_CRC_LEN
 MAX_PAYLOAD_LEN = CONTROL_PAYLOAD_LEN
-MAX_FRAME_LEN = FRAME_OVERHEAD + MAX_PAYLOAD_LEN   # 31
+MAX_FRAME_LEN = FRAME_OVERHEAD + MAX_PAYLOAD_LEN
+
+FRAME_DIRECTION_UPLINK = 0x55
+FRAME_DIRECTION_DOWNLINK = 0x44
 
 # MessageType
 MESSAGE_FAST_TLM = 0x1
@@ -81,13 +90,19 @@ REJECT_DEPRECATED_COMMAND = 8
 REJECT_PROFILE_REJECTED = 9
 
 # FlightStateCode
-FLIGHT_BOOT = 0
-FLIGHT_IDLE = 1
+FLIGHT_INIT = 0
+FLIGHT_SAFE = 1
 FLIGHT_ARMED = 2
 FLIGHT_LAUNCH = 3
-FLIGHT_DESCENT = 4
-FLIGHT_GROUND = 5
-FLIGHT_SAFE = 6
+FLIGHT_COAST = 4
+FLIGHT_APOGEE = 5
+FLIGHT_DROGUE = 6
+FLIGHT_DEPLOY = 7
+FLIGHT_GROUND = 8
+FLIGHT_FAULT = 9
+FLIGHT_BOOT = FLIGHT_INIT
+FLIGHT_IDLE = FLIGHT_SAFE
+FLIGHT_DESCENT = FLIGHT_DROGUE
 
 # 인증 키 (sender/receiver main.cpp 의 kAuthKey 와 동일, ASCII "NURA-V1LITE-TEST")
 # !! 실제 발사 전에는 반드시 비밀 키로 교체할 것 !!
@@ -95,6 +110,18 @@ AUTH_KEY = bytes([
     0x4e, 0x55, 0x52, 0x41, 0x2d, 0x56, 0x31, 0x4c,
     0x49, 0x54, 0x45, 0x2d, 0x54, 0x45, 0x53, 0x54,
 ])
+VEHICLE_ID = 0x4E555241
+
+_vehicle_id_text = os.getenv("NURA_RADIO_VEHICLE_ID")
+_auth_key_hex = os.getenv("NURA_RADIO_AUTH_KEY_HEX")
+if (_vehicle_id_text is None) != (_auth_key_hex is None):
+    raise RuntimeError("NURA_RADIO_VEHICLE_ID와 NURA_RADIO_AUTH_KEY_HEX를 함께 설정해야 함")
+if _vehicle_id_text is not None:
+    VEHICLE_ID = int(_vehicle_id_text, 0)
+    AUTH_KEY = bytes.fromhex(_auth_key_hex)
+    if not 0 <= VEHICLE_ID <= 0xFFFFFFFF or len(AUTH_KEY) != 16:
+        raise RuntimeError("vehicle ID는 u32, radio auth key는 16바이트여야 함")
+RADIO_IDENTITY_PROVISIONED = _vehicle_id_text is not None
 
 # 사람이 읽기 좋은 이름 매핑 (로그 출력용)
 _STAGE_NAMES = {0: "RECEIVED", 1: "ACCEPTED", 2: "EXECUTED", 3: "REJECTED", 4: "DUPLICATE"}
@@ -298,9 +325,17 @@ def make_control_auth_tag(control: ControlPayload, frame_seq: int, key: bytes = 
 
 
 # ─────────────────────────────────────────────
-#  프레임 인코딩 / 파싱
+#  V2 인증 프레임 인코딩 / 파싱
 # ─────────────────────────────────────────────
-def encode_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
+def _frame_auth_tag(frame: bytes, payload_len: int, direction: int, key: bytes) -> bytes:
+    authenticated = bytes([direction & 0xFF]) + frame[2:9 + payload_len]
+    return siphash24(authenticated, key).to_bytes(8, "little")
+
+
+def encode_frame(msg_type: int, seq: int, payload: bytes, *,
+                 vehicle_id: int = VEHICLE_ID,
+                 direction: int = FRAME_DIRECTION_UPLINK,
+                 key: bytes = AUTH_KEY) -> bytes:
     """
     C++ encodeFrame 과 동일. 완성된 송신 프레임(bytes)을 반환.
     payload 길이는 msg_type 에 맞아야 함.
@@ -313,117 +348,103 @@ def encode_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
     out[0] = SYNC0
     out[1] = SYNC1
     out[2] = make_ver_type(msg_type)
-    out[3:5] = (seq & 0xFFFF).to_bytes(2, "little")
-    out[5:5 + expected] = payload
-    # CRC 는 VerType(인덱스 2)부터 payload 끝까지 = 1 + 2 + expected 바이트
-    crc = crc16_ccitt_false(bytes(out[2:5 + expected]))
-    out[5 + expected:7 + expected] = (crc & 0xFFFF).to_bytes(2, "little")
+    out[3:7] = (vehicle_id & 0xFFFFFFFF).to_bytes(4, "little")
+    out[7:9] = (seq & 0xFFFF).to_bytes(2, "little")
+    out[FRAME_HEADER_LEN:FRAME_HEADER_LEN + expected] = payload
+    tag_offset = FRAME_HEADER_LEN + expected
+    out[tag_offset:tag_offset + FRAME_AUTH_TAG_LEN] = _frame_auth_tag(
+        bytes(out), expected, direction, key
+    )
+    crc = crc16_ccitt_false(bytes(out[2:tag_offset + FRAME_AUTH_TAG_LEN]))
+    out[-FRAME_CRC_LEN:] = (crc & 0xFFFF).to_bytes(2, "little")
     return bytes(out)
 
 
 @dataclass
 class ParsedFrame:
     msg_type: int
+    vehicle_id: int
     seq: int
     payload: bytes
 
 
+def decode_frame(frame: bytes, *, vehicle_id: int = VEHICLE_ID,
+                 direction: int = FRAME_DIRECTION_DOWNLINK,
+                 key: bytes = AUTH_KEY) -> ParsedFrame | None:
+    if len(frame) < FRAME_OVERHEAD or frame[0:2] != bytes([SYNC0, SYNC1]):
+        return None
+    ver_type = frame[2]
+    msg_type = frame_type(ver_type)
+    payload_len = payload_length_for_type(msg_type)
+    if frame_version(ver_type) != VERSION or payload_len == 0:
+        return None
+    if len(frame) != FRAME_OVERHEAD + payload_len:
+        return None
+    received_vehicle_id = int.from_bytes(frame[3:7], "little")
+    if received_vehicle_id != vehicle_id:
+        return None
+    received_crc = int.from_bytes(frame[-FRAME_CRC_LEN:], "little")
+    if received_crc != crc16_ccitt_false(frame[2:-FRAME_CRC_LEN]):
+        return None
+    tag_offset = FRAME_HEADER_LEN + payload_len
+    expected_tag = _frame_auth_tag(frame, payload_len, direction, key)
+    if expected_tag != frame[tag_offset:tag_offset + FRAME_AUTH_TAG_LEN]:
+        return None
+    return ParsedFrame(
+        msg_type=msg_type,
+        vehicle_id=received_vehicle_id,
+        seq=int.from_bytes(frame[7:9], "little"),
+        payload=bytes(frame[FRAME_HEADER_LEN:tag_offset]),
+    )
+
+
 class FrameParser:
     """
-    C++ nura::Parser 와 동일한 바이트 단위 상태 머신.
-    feed(byte) 를 호출하다가 완전한 프레임이 완성되면 ParsedFrame 을 반환,
-    아니면 None 을 반환.
+    USB serial stream에서 V2 프레임 경계를 찾은 뒤 전체 인증을 검증한다.
     """
 
-    # 내부 상태
-    _SCAN0, _SCAN1, _TYPE, _SEQ0, _SEQ1, _PAYLOAD, _CRC0, _CRC1 = range(8)
-
-    def __init__(self):
+    def __init__(self, *, vehicle_id: int = VEHICLE_ID,
+                 direction: int = FRAME_DIRECTION_DOWNLINK,
+                 key: bytes = AUTH_KEY):
+        self.vehicle_id = vehicle_id
+        self.direction = direction
+        self.key = key
         self.reset()
 
     def reset(self):
-        self._state = self._SCAN0
-        self._buf = bytearray(MAX_FRAME_LEN)
-        self._index = 0
-        self._payload_len = 0
-        self._payload_read = 0
+        self._buf = bytearray()
+        self._expected_len = 0
 
     def feed(self, byte: int):
         b = byte & 0xFF
-        st = self._state
-
-        if st == self._SCAN0:
+        if not self._buf:
             if b == SYNC0:
-                self._buf[0] = b
-                self._state = self._SCAN1
+                self._buf.append(b)
             return None
-
-        if st == self._SCAN1:
+        if len(self._buf) == 1:
             if b == SYNC1:
-                self._buf[1] = b
-                self._index = 2
-                self._state = self._TYPE
+                self._buf.append(b)
             elif b != SYNC0:
                 self.reset()
             return None
 
-        if st == self._TYPE:
-            self._buf[self._index] = b
-            self._index += 1
-            version = frame_version(b)
-            mtype = frame_type(b)
-            self._payload_len = payload_length_for_type(mtype)
-            if version != VERSION or self._payload_len == 0:
+        self._buf.append(b)
+        if len(self._buf) == 3:
+            payload_len = payload_length_for_type(frame_type(b))
+            if frame_version(b) != VERSION or payload_len == 0:
                 self.reset()
-                if b == SYNC0:
-                    self._buf[0] = b
-                    self._state = self._SCAN1
                 return None
-            self._state = self._SEQ0
-            return None
+            self._expected_len = FRAME_OVERHEAD + payload_len
 
-        if st == self._SEQ0:
-            self._buf[self._index] = b
-            self._index += 1
-            self._state = self._SEQ1
-            return None
-
-        if st == self._SEQ1:
-            self._buf[self._index] = b
-            self._index += 1
-            self._payload_read = 0
-            self._state = self._PAYLOAD
-            return None
-
-        if st == self._PAYLOAD:
-            self._buf[self._index] = b
-            self._index += 1
-            self._payload_read += 1
-            if self._payload_read >= self._payload_len:
-                self._state = self._CRC0
-            return None
-
-        if st == self._CRC0:
-            self._buf[self._index] = b
-            self._index += 1
-            self._state = self._CRC1
-            return None
-
-        if st == self._CRC1:
-            self._buf[self._index] = b
-            self._index += 1
-            received = int.from_bytes(self._buf[self._index - 2:self._index], "little")
-            computed = crc16_ccitt_false(bytes(self._buf[2:5 + self._payload_len]))
-            result = None
-            if received == computed:
-                mtype = frame_type(self._buf[2])
-                seq = int.from_bytes(self._buf[3:5], "little")
-                payload = bytes(self._buf[5:5 + self._payload_len])
-                result = ParsedFrame(msg_type=mtype, seq=seq, payload=payload)
+        if self._expected_len and len(self._buf) == self._expected_len:
+            raw = bytes(self._buf)
             self.reset()
-            return result
-
-        self.reset()
+            return decode_frame(raw,
+                                vehicle_id=self.vehicle_id,
+                                direction=self.direction,
+                                key=self.key)
+        if len(self._buf) > MAX_FRAME_LEN:
+            self.reset()
         return None
 
     def feed_bytes(self, data: bytes):
@@ -440,7 +461,8 @@ class FrameParser:
 #  강제 사출 프레임 빌더 (가장 중요한 함수)
 # ─────────────────────────────────────────────
 def build_force_deploy_frame(command_seq: int, frame_seq: int, nonce: int,
-                              key: bytes = AUTH_KEY) -> bytes:
+                              key: bytes = AUTH_KEY,
+                              vehicle_id: int = VEHICLE_ID) -> bytes:
     """
     "강제 사출(FORCE_DEPLOY_RECOVERY)" CONTROL 프레임을 통째로 만들어서 bytes 로 반환.
 
@@ -463,4 +485,7 @@ def build_force_deploy_frame(command_seq: int, frame_seq: int, nonce: int,
     )
     control.auth_or_ack = make_control_auth_tag(control, frame_seq, key)
     payload = control.encode()
-    return encode_frame(MESSAGE_CONTROL, frame_seq, payload)
+    return encode_frame(MESSAGE_CONTROL, frame_seq, payload,
+                        vehicle_id=vehicle_id,
+                        direction=FRAME_DIRECTION_UPLINK,
+                        key=key)

@@ -33,9 +33,15 @@
 namespace
 {
 constexpr unsigned long kSerialBaud = 115200UL;
+#if defined(NURA_DEV_SX1278)
 constexpr long kLoraFrequencyHz = 433000000L;
 constexpr uint32_t kLoraSpiFrequencyHz = 125000UL;
 constexpr int kLoraTxPowerDbm = 10;
+#else
+constexpr long kLoraFrequencyHz = 920900000L;
+constexpr uint32_t kLoraSpiFrequencyHz = 8000000UL;
+constexpr int kLoraTxPowerDbm = 17;
+#endif
 constexpr int kLoraSpreadingFactor = 7;
 constexpr long kLoraSignalBandwidthHz = 125000L;
 constexpr int kLoraCodingRateDenominator = 5;
@@ -47,7 +53,9 @@ constexpr uint8_t kLoraInitAttempts = 5U;
 uint8_t selectedSpiMode = SPI_MODE0;
 uint8_t selectedSpiModeNumber = 0U;
 bool radioReady = false;
-nura::Parser uplinkParser;   // PC -> LoRa 방향 프레임 재구성용
+uint8_t uplinkBuffer[nura::kMaxFrameLen];
+size_t uplinkCount = 0U;
+size_t uplinkExpectedLen = 0U;
 
 // ── LoRa 초기화 (receiver/sender 펌웨어와 동일) ──────────────
 void beginSpi()
@@ -152,13 +160,9 @@ bool beginRadio()
 }
 
 // ── PC -> LoRa : 완성된 프레임을 무선 송신 ──────────────────
-void sendFrameToLora(const nura::ParsedFrame &frame)
+void sendFrameToLora(const uint8_t *frame, size_t length)
 {
-    uint8_t out[nura::kMaxFrameLen];
-    const size_t len = nura::encodeFrame(frame.type, frame.seq,
-                                         frame.payload, frame.payloadLen,
-                                         out, sizeof(out));
-    if (len == 0U)
+    if (frame == nullptr || length == 0U || length > sizeof(uplinkBuffer))
     {
         return;
     }
@@ -171,7 +175,7 @@ void sendFrameToLora(const nura::ParsedFrame &frame)
         LoRa.receive();
         return;
     }
-    LoRa.write(out, len);
+    LoRa.write(frame, length);
     LoRa.endPacket();
     LoRa.receive();
 }
@@ -186,10 +190,51 @@ void pumpSerialToLora()
         {
             break;
         }
-        nura::ParsedFrame frame;
-        if (uplinkParser.feed(static_cast<uint8_t>(value), frame))
+        const uint8_t byte = static_cast<uint8_t>(value);
+        if (uplinkCount == 0U)
         {
-            sendFrameToLora(frame);   // 한 프레임 완성 -> 송신
+            if (byte == nura::kSync0)
+            {
+                uplinkBuffer[uplinkCount++] = byte;
+            }
+            continue;
+        }
+        if (uplinkCount == 1U)
+        {
+            if (byte == nura::kSync1)
+            {
+                uplinkBuffer[uplinkCount++] = byte;
+            }
+            else if (byte != nura::kSync0)
+            {
+                uplinkCount = 0U;
+            }
+            continue;
+        }
+        if (uplinkCount >= sizeof(uplinkBuffer))
+        {
+            uplinkCount = 0U;
+            uplinkExpectedLen = 0U;
+            continue;
+        }
+
+        uplinkBuffer[uplinkCount++] = byte;
+        if (uplinkCount == 3U)
+        {
+            const uint8_t payloadLen = nura::payloadLengthForType(nura::frameType(byte));
+            if (nura::frameVersion(byte) != nura::kVersion || payloadLen == 0U)
+            {
+                uplinkCount = 0U;
+                continue;
+            }
+            uplinkExpectedLen = static_cast<size_t>(nura::kFrameOverhead) + payloadLen;
+        }
+
+        if (uplinkExpectedLen != 0U && uplinkCount == uplinkExpectedLen)
+        {
+            sendFrameToLora(uplinkBuffer, uplinkCount);
+            uplinkCount = 0U;
+            uplinkExpectedLen = 0U;
         }
     }
 }
@@ -225,7 +270,7 @@ void setup()
     // 이 텍스트는 그냥 무시되어 안전함.
     Serial.println();
     Serial.println("NURA LoRa serial bridge");
-    Serial.println("role=bridge board=teensy41 protocol=v1_lite");
+    Serial.println("role=bridge board=teensy41 protocol=v2_lite_auth");
 
     radioReady = beginRadio();
     if (!radioReady)
