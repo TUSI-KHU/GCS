@@ -2,3 +2,6 @@
 __pycache__/
 *.py[cod]
 logs/flight_log_*.csv
+
+# PlatformIO build outputs and downloaded libraries
+**/.pio/
