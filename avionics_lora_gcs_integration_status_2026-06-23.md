@@ -6,10 +6,10 @@
 
 | Repository | GitHub main 기준 | 로컬 상태 |
 | --- | --- | --- |
-| `TUSI-KHU/2026-nura-avionics` | `origin/main` `77ce2fd` | 로컬 수정 있음 |
+| `TUSI-KHU/2026-nura-avionics` | `origin/main` `0c5203a` | 깨끗함 |
 | `TUSI-KHU/GCS` | `origin/main` `02e6f4a` | 이 문서 추가 전 깨끗함 |
 
-이 문서는 GCS repo에 기록한다. Avionics repo의 코드 수정은 현장 디버깅을 위한 로컬 변경이며, 별도 요청 전까지 avionics GitHub에는 업로드하지 않았다.
+이 문서는 GCS repo에 기록한다. Avionics repo의 현장 디버깅 수정은 `0c5203a` (`fixed`) 커밋으로 GitHub `main`에 반영된 상태를 기준으로 정리했다.
 
 ## 현재 가능한 것
 
@@ -54,9 +54,9 @@ status radio=ready spi_mode=0 m0=0x12 ... phy_rx=526 decode_fail=0 rssi_now_dbm=
 
 `phy_rx`가 더 이상 증가하지 않아 GCS 문제가 아니라 무선 송신이 새로 들어오지 않는 상태로 판단했다.
 
-## GitHub main 대비 Avionics 로컬 수정 내역
+## Avionics 수정 내역
 
-`TUSI-KHU/2026-nura-avionics` 기준 `origin/main` 대비 변경:
+`TUSI-KHU/2026-nura-avionics`에서 이전 기준 `77ce2fd` (`lora_fix`) 대비 최신 GitHub `main` `0c5203a` (`fixed`)에 반영된 변경:
 
 ```text
 platformio.ini                    |  4 ++++
@@ -86,7 +86,7 @@ src/hal/sx1262_lora_hal.h         |  2 ++
 -D NURA_BENCH_DISABLE_FLIGHT_LOG_TASK=1
 ```
 
-이 변경은 `debug_radio_bench` 환경에만 적용되도록 작성했다. `main` 비행 빌드의 state-machine, pyro, deployment threshold 자체를 바꾸지는 않았다.
+이 변경은 `debug_radio_bench` 환경에만 적용되도록 작성했다. 비행 state-machine, pyro, deployment threshold 자체를 바꾸지는 않았다.
 
 ## 시도한 것과 결과
 
@@ -133,4 +133,3 @@ src/hal/sx1262_lora_hal.h         |  2 ++
 - GCS serial port는 지상국 `/dev/ttyACM1`.
 - 지상국 receiver는 `radio=ready`.
 - 실제 FSM Avionics는 LoRa TX 실패 상태.
-
