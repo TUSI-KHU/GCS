@@ -56,6 +56,44 @@ mission_control.html
 
 `desktop.py` is not the main ground station anymore. It is kept as a PyQt helper/legacy view. The main operator flow is the web UI served by `app.py`.
 
+## LR900-F Teensy Bridge
+
+For an LR900-F ground radio, upload the UART bridge firmware instead of the
+SX127x SPI bridge:
+
+```bash
+pio run -d firmware/lora_serial_bridge -e lr900f_teensy41 -t upload
+```
+
+Default wiring uses Teensy 4.1 `Serial1`:
+
+| LR900-F JST-GH pin | Teensy 4.1 pin |
+| --- | --- |
+| `G` / GND | GND |
+| `V` / VCC | 5V/VIN |
+| `R` / RX | TX1, pin 1 |
+| `T` / TX | RX1, pin 0 |
+
+The PC-facing USB serial stays at `115200`. The LR900-F JST-GH UART side uses
+the LR900-F default `57600` baud.
+
+## SX127x SPI Ground LoRa Pin Map
+
+The default `teensy41` and `dev_sx1278` bridge firmware uses the ground station
+LoRa module on Teensy 4.1 `SPI1`:
+
+| LoRa signal | Teensy 4.1 pin |
+| --- | --- |
+| `MISO1` | 1 |
+| `MOSI1` | 26 |
+| `SCK1` | 27 |
+| `RXE` | 30 |
+| `TXE` | 31 |
+| `DIO0` | 32 |
+| `DIO1` | 8 |
+| `RST` | 24 |
+| `CS` | 9 |
+
 ## Install
 
 ```bash

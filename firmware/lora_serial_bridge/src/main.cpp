@@ -21,9 +21,127 @@
 // ============================================================
 
 #include <Arduino.h>
+
+#if defined(NURA_LR900F_UART_BRIDGE)
+
+#include "nura_protocol_v1_lite.h"
+
+namespace
+{
+constexpr unsigned long kPcSerialBaud = 115200UL;
+constexpr unsigned long kRadioSerialBaud = 57600UL;
+
+HardwareSerial &RadioSerial = Serial1;
+
+uint8_t uplinkBuffer[nura::kMaxFrameLen];
+size_t uplinkCount = 0U;
+size_t uplinkExpectedLen = 0U;
+
+void sendFrameToRadio(const uint8_t *frame, size_t length)
+{
+    if (frame == nullptr || length == 0U || length > sizeof(uplinkBuffer))
+    {
+        return;
+    }
+    RadioSerial.write(frame, length);
+}
+
+void pumpSerialToRadio()
+{
+    while (Serial.available() > 0)
+    {
+        const int value = Serial.read();
+        if (value < 0)
+        {
+            break;
+        }
+
+        const uint8_t byte = static_cast<uint8_t>(value);
+        if (uplinkCount == 0U)
+        {
+            if (byte == nura::kSync0)
+            {
+                uplinkBuffer[uplinkCount++] = byte;
+            }
+            continue;
+        }
+        if (uplinkCount == 1U)
+        {
+            if (byte == nura::kSync1)
+            {
+                uplinkBuffer[uplinkCount++] = byte;
+            }
+            else if (byte != nura::kSync0)
+            {
+                uplinkCount = 0U;
+            }
+            continue;
+        }
+        if (uplinkCount >= sizeof(uplinkBuffer))
+        {
+            uplinkCount = 0U;
+            uplinkExpectedLen = 0U;
+            continue;
+        }
+
+        uplinkBuffer[uplinkCount++] = byte;
+        if (uplinkCount == 3U)
+        {
+            const uint8_t payloadLen = nura::payloadLengthForType(nura::frameType(byte));
+            if (nura::frameVersion(byte) != nura::kVersion || payloadLen == 0U)
+            {
+                uplinkCount = 0U;
+                continue;
+            }
+            uplinkExpectedLen = static_cast<size_t>(nura::kFrameOverhead) + payloadLen;
+        }
+
+        if (uplinkExpectedLen != 0U && uplinkCount == uplinkExpectedLen)
+        {
+            sendFrameToRadio(uplinkBuffer, uplinkCount);
+            uplinkCount = 0U;
+            uplinkExpectedLen = 0U;
+        }
+    }
+}
+
+void pumpRadioToSerial()
+{
+    while (RadioSerial.available() > 0)
+    {
+        const int value = RadioSerial.read();
+        if (value < 0)
+        {
+            break;
+        }
+        Serial.write(static_cast<uint8_t>(value));
+    }
+}
+} // namespace
+
+void setup()
+{
+    Serial.begin(kPcSerialBaud);
+    RadioSerial.begin(kRadioSerialBaud);
+    while (!Serial && millis() < 4000UL)
+    {
+    }
+
+    Serial.println();
+    Serial.println("NURA LR900-F UART bridge");
+    Serial.println("role=bridge board=teensy41 radio=lr900f pc_baud=115200 radio_baud=57600");
+}
+
+void loop()
+{
+    pumpSerialToRadio();
+    pumpRadioToSerial();
+}
+
+#else
+
 #include <SPI.h>
 
-#include "board_pinmap.h"
 #include "nura_protocol_v1_lite.h"
 
 #define private public
@@ -50,6 +168,25 @@ constexpr uint8_t kLoraRegVersion = 0x42U;
 constexpr uint8_t kLoraExpectedVersion = 0x12U;
 constexpr uint8_t kLoraInitAttempts = 5U;
 
+struct GroundLoraPinMap final
+{
+    static constexpr uint8_t misoPin = 1U;
+    static constexpr uint8_t mosiPin = 26U;
+    static constexpr uint8_t sckPin = 27U;
+    static constexpr uint8_t rxEnablePin = 30U;
+    static constexpr uint8_t txEnablePin = 31U;
+    static constexpr uint8_t dio0Pin = 32U;
+    static constexpr uint8_t dio1Pin = 8U;
+    static constexpr uint8_t resetPin = 24U;
+    static constexpr int8_t libraryResetPin = -1;
+    static constexpr uint8_t ssPin = 9U;
+
+    static SPIClass &spi()
+    {
+        return SPI1;
+    }
+};
+
 uint8_t selectedSpiMode = SPI_MODE0;
 uint8_t selectedSpiModeNumber = 0U;
 bool radioReady = false;
@@ -57,49 +194,67 @@ uint8_t uplinkBuffer[nura::kMaxFrameLen];
 size_t uplinkCount = 0U;
 size_t uplinkExpectedLen = 0U;
 
+void setRadioReceiveMode()
+{
+    digitalWrite(GroundLoraPinMap::txEnablePin, LOW);
+    digitalWrite(GroundLoraPinMap::rxEnablePin, HIGH);
+}
+
+void setRadioTransmitMode()
+{
+    digitalWrite(GroundLoraPinMap::rxEnablePin, LOW);
+    digitalWrite(GroundLoraPinMap::txEnablePin, HIGH);
+}
+
 // ── LoRa 초기화 (receiver/sender 펌웨어와 동일) ──────────────
 void beginSpi()
 {
 #if defined(CORE_TEENSY)
-    SPI.setMOSI(BoardPinMap::SpiBus::mosiPin);
-    SPI.setMISO(BoardPinMap::SpiBus::misoPin);
-    SPI.setSCK(BoardPinMap::SpiBus::sckPin);
+    GroundLoraPinMap::spi().setMOSI(GroundLoraPinMap::mosiPin);
+    GroundLoraPinMap::spi().setMISO(GroundLoraPinMap::misoPin);
+    GroundLoraPinMap::spi().setSCK(GroundLoraPinMap::sckPin);
 #endif
-    SPI.begin();
+    GroundLoraPinMap::spi().begin();
 }
 
 uint8_t readLoraRegisterRaw(uint8_t address, uint8_t spiMode)
 {
     SPISettings settings(kLoraSpiFrequencyHz, MSBFIRST, spiMode);
-    pinMode(BoardPinMap::Ra01DevelopmentLoRa::ssPin, OUTPUT);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::ssPin, HIGH);
-    SPI.beginTransaction(settings);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::ssPin, LOW);
+    pinMode(GroundLoraPinMap::ssPin, OUTPUT);
+    digitalWrite(GroundLoraPinMap::ssPin, HIGH);
+    GroundLoraPinMap::spi().beginTransaction(settings);
+    digitalWrite(GroundLoraPinMap::ssPin, LOW);
     delayMicroseconds(20);
-    SPI.transfer(address & 0x7FU);
-    const uint8_t value = SPI.transfer(0x00U);
+    GroundLoraPinMap::spi().transfer(address & 0x7FU);
+    const uint8_t value = GroundLoraPinMap::spi().transfer(0x00U);
     delayMicroseconds(20);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::ssPin, HIGH);
-    SPI.endTransaction();
+    digitalWrite(GroundLoraPinMap::ssPin, HIGH);
+    GroundLoraPinMap::spi().endTransaction();
     return value;
 }
 
 void resetRadio()
 {
-    pinMode(BoardPinMap::Ra01DevelopmentLoRa::ssPin, OUTPUT);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::ssPin, HIGH);
-    pinMode(BoardPinMap::Ra01DevelopmentLoRa::resetPin, OUTPUT);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::resetPin, LOW);
+    pinMode(GroundLoraPinMap::ssPin, OUTPUT);
+    pinMode(GroundLoraPinMap::rxEnablePin, OUTPUT);
+    pinMode(GroundLoraPinMap::txEnablePin, OUTPUT);
+    pinMode(GroundLoraPinMap::dio0Pin, INPUT);
+    pinMode(GroundLoraPinMap::dio1Pin, INPUT);
+    digitalWrite(GroundLoraPinMap::ssPin, HIGH);
+    setRadioReceiveMode();
+    pinMode(GroundLoraPinMap::resetPin, OUTPUT);
+    digitalWrite(GroundLoraPinMap::resetPin, LOW);
     delay(50);
-    digitalWrite(BoardPinMap::Ra01DevelopmentLoRa::resetPin, HIGH);
+    digitalWrite(GroundLoraPinMap::resetPin, HIGH);
     delay(500);
 }
 
 bool beginRadio()
 {
-    LoRa.setPins(BoardPinMap::Ra01DevelopmentLoRa::ssPin,
-                 BoardPinMap::Ra01DevelopmentLoRa::libraryResetPin,
-                 BoardPinMap::Ra01DevelopmentLoRa::dio0Pin);
+    LoRa.setSPI(GroundLoraPinMap::spi());
+    LoRa.setPins(GroundLoraPinMap::ssPin,
+                 GroundLoraPinMap::libraryResetPin,
+                 GroundLoraPinMap::dio0Pin);
     LoRa.setSPIFrequency(kLoraSpiFrequencyHz);
 
     for (uint8_t attempt = 1U; attempt <= kLoraInitAttempts; ++attempt)
@@ -149,6 +304,7 @@ bool beginRadio()
             LoRa.setCodingRate4(kLoraCodingRateDenominator);
             LoRa.setSyncWord(kLoraSyncWord);
             LoRa.enableCrc();
+            setRadioReceiveMode();
             LoRa.receive();
             return true;
         }
@@ -168,15 +324,18 @@ void sendFrameToLora(const uint8_t *frame, size_t length)
     }
 
     LoRa._spiSettings = SPISettings(kLoraSpiFrequencyHz, MSBFIRST, selectedSpiMode);
+    setRadioTransmitMode();
     LoRa.idle();
     delay(2);
     if (!LoRa.beginPacket())
     {
+        setRadioReceiveMode();
         LoRa.receive();
         return;
     }
     LoRa.write(frame, length);
     LoRa.endPacket();
+    setRadioReceiveMode();
     LoRa.receive();
 }
 
@@ -290,3 +449,5 @@ void loop()
     pumpSerialToLora();   // PC -> 로켓
     pumpLoraToSerial();   // 로켓 -> PC
 }
+
+#endif

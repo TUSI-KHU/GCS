@@ -25,6 +25,19 @@ HTML_FILENAME = "mission_control.html"
 app = Flask(__name__)
 uplink: PyroUplink | None = None
 
+FLIGHT_STATE_NAMES = {
+    p.FLIGHT_INIT: "INIT",
+    p.FLIGHT_SAFE: "SAFE",
+    p.FLIGHT_ARMED: "ARMED",
+    p.FLIGHT_LAUNCH: "LAUNCH",
+    p.FLIGHT_COAST: "COAST",
+    p.FLIGHT_APOGEE: "APOGEE",
+    p.FLIGHT_DROGUE: "DROGUE",
+    p.FLIGHT_DEPLOY: "DEPLOY",
+    p.FLIGHT_GROUND: "GROUND",
+    p.FLIGHT_FAULT: "FAULT",
+}
+
 
 class TelemetryLogger:
     def __init__(self) -> None:
@@ -235,6 +248,16 @@ class HardwareTelemetry:
             row["snr"] = self.snr
             return row
 
+    def current_point(self) -> dict:
+        row = self.waiting_point()
+        age = None
+        with self.lock:
+            if self.last_packet_at is not None:
+                age = time.monotonic() - self.last_packet_at
+        if self.latest is not None and age is not None and age <= 10.0:
+            row["source"] = "hardware"
+        return row
+
     def disconnected_point(self) -> dict:
         row = self.waiting_point()
         row["source"] = "hardware_disconnected"
@@ -272,6 +295,8 @@ class HardwareTelemetry:
         else:
             frames = link.read_frames(4096)
             lines = []
+        if lines:
+            frames = []
         new_telemetry = False
         with self.lock:
             for frame in frames:
@@ -343,6 +368,11 @@ class HardwareTelemetry:
         accel = math.sqrt(ax * ax + ay * ay + az * az)
         pitch = math.degrees(math.atan2(ax, math.sqrt(ay * ay + az * az)))
         roll = math.degrees(math.atan2(ay, az)) if az != 0.0 else 0.0
+        baro_dp_2pa_match = re.search(r"baro_dp_2pa=(?P<baro>-?\d+)", line)
+        baro_dp_2pa = int(baro_dp_2pa_match.group("baro")) if baro_dp_2pa_match else None
+        baro_alt_m = self.alt
+        if baro_dp_2pa is not None:
+            baro_alt_m = max(0.0, -(baro_dp_2pa * 2.0) / 12.0)
 
         self.packet_id += 1
         self.fast_count += 1
@@ -356,16 +386,24 @@ class HardwareTelemetry:
         self.snr = float(match.group("snr"))
         self.latest = {
             "ts": round(session_s, 2),
-            "alt": round(self.alt, 2),
+            "alt": round(baro_alt_m, 2),
             "lat": round(self.lat, 7),
             "lng": round(self.lng, 7),
             "pitch": round(pitch, 2),
+            "pitch_source": "accel_tilt_estimate",
             "roll": round(roll, 2),
-            "yaw": round(gz, 2),
+            "roll_source": "accel_tilt_estimate",
+            "yaw": 0.0,
+            "yaw_source": "unavailable",
             "accel": round(accel, 3),
+            "accel_x_g": round(ax, 3),
+            "accel_y_g": round(ay, 3),
+            "accel_z_g": round(az, 3),
             "gyro_x": round(gx, 2),
             "gyro_y": round(gy, 2),
             "gyro_z": round(gz, 2),
+            "yaw_rate_dps": round(gz, 2),
+            "baro_dp_2pa": baro_dp_2pa,
             "batt_mv": int(match.group("batt")),
             "health": match.group("health"),
         }
@@ -428,6 +466,8 @@ class HardwareTelemetry:
     def _apply_fast(self, seq: int, payload: bytes) -> None:
         if len(payload) != p.FAST_PAYLOAD_LEN:
             return
+        status_word = int.from_bytes(payload[0:2], "little")
+        state_code = (status_word >> 8) & 0x0F
         boot_ms = int.from_bytes(payload[2:6], "little")
         if self.base_boot_ms is None:
             self.base_boot_ms = boot_ms
@@ -437,24 +477,43 @@ class HardwareTelemetry:
         ax = int.from_bytes(payload[8:10], "little", signed=True) / 100.0
         ay = int.from_bytes(payload[10:12], "little", signed=True) / 100.0
         az = int.from_bytes(payload[12:14], "little", signed=True) / 100.0
+        gx = int.from_bytes(payload[14:16], "little", signed=True) / 10.0
+        gy = int.from_bytes(payload[16:18], "little", signed=True) / 10.0
         gz = int.from_bytes(payload[18:20], "little", signed=True) / 10.0
         accel = math.sqrt(ax * ax + ay * ay + az * az)
         pitch = math.degrees(math.atan2(ax, math.sqrt(ay * ay + az * az)))
         roll = math.degrees(math.atan2(ay, az)) if az != 0.0 else 0.0
+        baro_dp_2pa = int.from_bytes(payload[6:8], "little", signed=True)
+        baro_alt_m = max(0.0, -(baro_dp_2pa * 2.0) / 12.0)
         self.packet_id += 1
         self.fast_count += 1
         self.last_fast_seq = seq
         self.last_fast_payload_hex = payload.hex(" ")
         self.last_packet_at = time.monotonic()
+        self.state_code = state_code
+        self.state = FLIGHT_STATE_NAMES.get(state_code, f"UNKNOWN({state_code})")
+        self.status_word = f"0x{status_word:04X}"
         self.latest = {
             "ts": round(session_s, 2),
-            "alt": round(self.alt, 2),
+            "alt": round(baro_alt_m, 2),
             "lat": round(self.lat, 7),
             "lng": round(self.lng, 7),
             "pitch": round(pitch, 2),
+            "pitch_source": "accel_tilt_estimate",
             "roll": round(roll, 2),
-            "yaw": round(gz, 2),
+            "roll_source": "accel_tilt_estimate",
+            "yaw": 0.0,
+            "yaw_source": "unavailable",
             "accel": round(accel, 3),
+            "accel_x_g": round(ax, 3),
+            "accel_y_g": round(ay, 3),
+            "accel_z_g": round(az, 3),
+            "gyro_x": round(gx, 2),
+            "gyro_y": round(gy, 2),
+            "gyro_z": round(gz, 2),
+            "yaw_rate_dps": round(gz, 2),
+            "baro_dp_2pa": baro_dp_2pa,
+            "batt_mv": int.from_bytes(payload[20:22], "little"),
         }
 
     def _apply_gps(self, seq: int, payload: bytes) -> None:
@@ -477,6 +536,44 @@ class HardwareTelemetry:
 hardware_telemetry = HardwareTelemetry()
 
 
+class HardwareTelemetryReader:
+    def __init__(self) -> None:
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._link: PyroUplink | None = None
+
+    def start(self, link: PyroUplink | None) -> None:
+        if link is None or link.simulate:
+            return
+        self._link = link
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="telemetry-reader", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            link = self._link
+            if link is None:
+                time.sleep(0.1)
+                continue
+            if not link.is_open():
+                try:
+                    link.open()
+                except RuntimeError:
+                    time.sleep(0.5)
+                    continue
+            hardware_telemetry.next_point(link)
+            time.sleep(0.005)
+
+
+hardware_reader = HardwareTelemetryReader()
+
+
 def mission_control_html_path() -> str:
     return os.path.join(HERE, HTML_FILENAME)
 
@@ -484,6 +581,13 @@ def mission_control_html_path() -> str:
 @app.route("/")
 def index():
     return send_file(mission_control_html_path())
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    if request.path.startswith("/api/telemetry/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.route("/api/telemetry/next", methods=["GET"])
@@ -502,10 +606,7 @@ def telemetry_next():
         if uplink is None or not uplink.is_open():
             return jsonify(hardware_telemetry.disconnected_point())
 
-    row = hardware_telemetry.next_point(uplink)
-    if row is not None:
-        return jsonify(row)
-    return jsonify(hardware_telemetry.waiting_point())
+    return jsonify(hardware_telemetry.current_point())
 
 
 @app.route("/api/telemetry/reset", methods=["POST"])
@@ -577,6 +678,7 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"[WARN] PYRO uplink connection failed: {exc}", file=sys.stderr)
         print("       Use --simulate to test without hardware.", file=sys.stderr)
+    hardware_reader.start(uplink)
 
     mode = "simulate" if args.simulate else f"serial:{uplink.port}"
     url = f"http://{args.host}:{args.http_port}/"

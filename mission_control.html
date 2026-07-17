@@ -317,10 +317,13 @@ body {
   display: flex; gap: 2px; margin-top: var(--cds-spacing-02);
 }
 .phase-lbl {
-  flex:1; font-size:9px; color: var(--cds-text-helper);
-  text-align: center; text-transform: uppercase; letter-spacing: 0.3px;
+  flex: 1; min-width: 0; font-size: 8px; color: var(--cds-text-helper);
+  text-align: center; text-transform: uppercase; letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .phase-lbl.active-phase { color: var(--cds-interactive); font-weight: 600; }
+.phase-seg.fault-phase { background: var(--cds-support-error); }
+.phase-lbl.fault-phase { color: var(--cds-support-error); font-weight: 600; }
 
 /* ─────────────── Center: Map ─────────────── */
 .panel-center {
@@ -866,7 +869,7 @@ body {
       <!-- Flight Phase -->
       <div class="flight-phase">
         <div class="section-header" style="margin: 0 -0px 8px; padding:0;">
-          <span style="font-size:10px;color:var(--cds-text-helper);text-transform:uppercase;letter-spacing:0.6px;font-weight:600;">Flight Phase: <span id="phase-name" style="color:var(--cds-text-secondary);">PRE-LAUNCH</span></span>
+          <span style="font-size:10px;color:var(--cds-text-helper);text-transform:uppercase;letter-spacing:0.6px;font-weight:600;">Flight State: <span id="phase-name" style="color:var(--cds-text-secondary);">SAFE</span></span>
         </div>
         <div class="phase-bar">
           <div class="phase-seg" id="ph-0"></div>
@@ -874,13 +877,23 @@ body {
           <div class="phase-seg" id="ph-2"></div>
           <div class="phase-seg" id="ph-3"></div>
           <div class="phase-seg" id="ph-4"></div>
+          <div class="phase-seg" id="ph-5"></div>
+          <div class="phase-seg" id="ph-6"></div>
+          <div class="phase-seg" id="ph-7"></div>
+          <div class="phase-seg" id="ph-8"></div>
+          <div class="phase-seg" id="ph-9"></div>
         </div>
         <div class="phase-labels">
-          <span class="phase-lbl" id="phl-0">Pad</span>
-          <span class="phase-lbl" id="phl-1">Boost</span>
-          <span class="phase-lbl" id="phl-2">Coast</span>
-          <span class="phase-lbl" id="phl-3">Descent</span>
-          <span class="phase-lbl" id="phl-4">Recovery</span>
+          <span class="phase-lbl" id="phl-0">Init</span>
+          <span class="phase-lbl" id="phl-1">Safe</span>
+          <span class="phase-lbl" id="phl-2">Armed</span>
+          <span class="phase-lbl" id="phl-3">Launch</span>
+          <span class="phase-lbl" id="phl-4">Coast</span>
+          <span class="phase-lbl" id="phl-5">Apogee</span>
+          <span class="phase-lbl" id="phl-6">Drogue</span>
+          <span class="phase-lbl" id="phl-7">Deploy</span>
+          <span class="phase-lbl" id="phl-8">Ground</span>
+          <span class="phase-lbl" id="phl-9">Fault</span>
         </div>
       </div>
 
@@ -1148,10 +1161,12 @@ let isStreaming    = false;
 let autoTrack      = true;
 let demoIdx        = 0;
 let streamInterval = null;
+let streamFetchInFlight = false;
 let currentTab     = 'gps';
 let stats = { maxAlt: 0, maxSpd: 0, totalDist: 0, points: 0 };
 let lastPos        = null;
 let prevAlt        = 0;
+let prevTs         = null;
 let currentPhase   = 0;
 
 const flightData = { ts:[], alt:[], accel:[], lat:[], lng:[], pitch:[], roll:[], vvel:[], yaw:[] };
@@ -1619,7 +1634,7 @@ function drawRocket(pitch=0, roll=0, alt=0, phase=0) {
   rctx.beginPath(); rctx.moveTo(0, H/2); rctx.lineTo(W, H/2); rctx.stroke();
   rctx.setLineDash([]);
 
-  const hasChutePhase = (phase === 3 || phase === 4); // Descent or Recovery
+  const hasChutePhase = (phase === 6 || phase === 7 || phase === 8); // Drogue, Deploy, Ground
 
   // ═══════════════════════════════════════════
   // SAFE SCALE — rocket must never clip the panel
@@ -1657,7 +1672,7 @@ function drawRocket(pitch=0, roll=0, alt=0, phase=0) {
   rctx.rotate(pitchRad);
 
   // ═══════════════════════════════════════════
-  // PARACHUTE (phase 3 = Descent, phase 4 = Recovery)
+  // PARACHUTE (flight states 6/7/8 = Drogue/Deploy/Ground)
   // IBM Carbon: #f1c21b (warning/yellow) canopy, #8d8d8d lines
   // ═══════════════════════════════════════════
   if (hasChutePhase) {
@@ -1714,10 +1729,10 @@ function drawRocket(pitch=0, roll=0, alt=0, phase=0) {
   }
 
   // ═══════════════════════════════════════════
-  // EXHAUST PLUME (phase 1 = Boost)
+  // EXHAUST PLUME (flight state 3 = Launch)
   // IBM Carbon: #fa4d56 → #f1c21b → transparent
   // ═══════════════════════════════════════════
-  if (phase === 1) {
+  if (phase === 3) {
     const plLen = (18 + Math.random() * 14) * S;
     const py0   = 44 * S;
     const grad  = rctx.createLinearGradient(0, py0, 0, py0 + plLen);
@@ -1855,10 +1870,9 @@ function drawRocket(pitch=0, roll=0, alt=0, phase=0) {
   rctx.font = `400 ${fs}px 'IBM Plex Mono', monospace`;
 
   // Phase badge (top-left)
-  const phaseLabels = ['PAD','BOOST','COAST','DESCENT','RECOVERY'];
-  const phaseColors = ['#8d8d8d','#fa4d56','#0f62fe','#f1c21b','#24a148'];
-  const pLabel = phaseLabels[Math.min(phase, 4)];
-  const pColor = phaseColors[Math.min(phase, 4)];
+  const phaseMeta = getFlightStateMeta(phase);
+  const pLabel = phaseMeta.shortLabel;
+  const pColor = phaseMeta.color;
   const badgeW = rctx.measureText(pLabel).width + 16;
   rctx.fillStyle = 'rgba(22,22,22,0.85)';
   rctx.fillRect(8, 8, badgeW, 18);
@@ -1897,11 +1911,19 @@ function updateUI(row) {
   const pitch = parseFloat(row.pitch);
   const roll  = parseFloat(row.roll);
   const accel = parseFloat(row.accel);
-  const vvel  = alt - prevAlt;
+  const dt = Number.isFinite(prevTs) && Number.isFinite(t) && t > prevTs ? Math.max(0.001, t - prevTs) : null;
+  const vvel  = dt ? (alt - prevAlt) / dt : 0;
   prevAlt = alt;
+  prevTs = t;
 
-  const vel = Math.abs(vvel) / 0.2; // approx m/s
+  const vel = Math.abs(vvel);
   const phase = getPhase(t, alt, accel, row);
+  const isHardware = (row.source || '').startsWith('hardware');
+  const yawValue = isHardware && Number.isFinite(parseFloat(row.yaw_rate_dps))
+    ? parseFloat(row.yaw_rate_dps)
+    : (Number.isFinite(parseFloat(row.yaw)) ? parseFloat(row.yaw) : (roll * 0.3 + pitch * 0.1));
+  const yawLabel = isHardware ? 'Yaw Rate' : 'Yaw';
+  const yawUnit = isHardware ? '°/s' : '°';
 
   // ─ Text values ─
   set('v-alt',   alt.toFixed(1));
@@ -1975,7 +1997,9 @@ function updateUI(row) {
 
   // ─ Charts: 전체 데이터 저장 후 뷰포트 렌더링 ─
   const lbl = t.toFixed(1);
-  const yaw  = parseFloat(row.yaw) || (roll * 0.3 + pitch * 0.1); // fallback for demo
+  const yaw  = yawValue;
+  const yawTitle = document.querySelector('#wrap-yaw')?.parentElement?.querySelector('.chart-section-title');
+  if (yawTitle) yawTitle.innerHTML = `<span style="color:#be95ff;">●</span> ${yawLabel}`;
 
   // flightData에 모든 데이터 누적
   flightData.ts.push(lbl);
@@ -1985,7 +2009,7 @@ function updateUI(row) {
   flightData.pitch.push(pitch);
   flightData.roll.push(roll);
   flightData.accel.push(accel);
-  flightData.vvel.push(vvel / 0.2);
+  flightData.vvel.push(vvel);
   flightData.yaw.push(yaw);
   // MAX_HISTORY 초과 시 앞에서 제거
   if (flightData.ts.length > MAX_HISTORY) {
@@ -2000,11 +2024,11 @@ function updateUI(row) {
   set('cur-lng',   lng.toFixed(6));
   set('cur-galt',  alt.toFixed(1));
   set('cur-alt2',  alt.toFixed(1));
-  set('cur-vvel',  (vvel/0.2).toFixed(1));
+  set('cur-vvel',  vvel.toFixed(1));
   set('cur-accel', accel.toFixed(2));
   set('cur-pitch', pitch.toFixed(1));
   set('cur-roll',  roll.toFixed(1));
-  set('cur-yaw',   yaw.toFixed(1));
+  set('cur-yaw',   `${yaw.toFixed(1)} ${yawUnit}`);
 
   // ─ Mini-map sync ─
   if (window._miniMap && window._miniMarker) {
@@ -2016,8 +2040,8 @@ function updateUI(row) {
   }
 
   // ─ Visualizer ─
-  // 강제 사출 상태면 phase를 항상 3(Descent)으로 고정
-  const renderPhase = window._ejectForced ? 3 : phase;
+  // 강제 사출 상태면 deploy 계열 시각화로 고정
+  const renderPhase = window._ejectForced ? 7 : phase;
   drawRocket(pitch, roll, alt, renderPhase);
 
   // ─ Timer ─
@@ -2038,31 +2062,56 @@ function set(id, val) {
 // ─────────────────────────────────────────────
 //  FLIGHT PHASE
 // ─────────────────────────────────────────────
-const PHASES = ['Pad','Boost','Coast','Descent','Recovery'];
+const FLIGHT_STATES = [
+  { code: 0, label: 'INIT', shortLabel: 'INIT', color: '#8d8d8d' },
+  { code: 1, label: 'SAFE', shortLabel: 'SAFE', color: '#8d8d8d' },
+  { code: 2, label: 'ARMED', shortLabel: 'ARMED', color: '#f1c21b' },
+  { code: 3, label: 'LAUNCH', shortLabel: 'LAUNCH', color: '#fa4d56' },
+  { code: 4, label: 'COAST', shortLabel: 'COAST', color: '#0f62fe' },
+  { code: 5, label: 'APOGEE', shortLabel: 'APOGEE', color: '#be95ff' },
+  { code: 6, label: 'DROGUE', shortLabel: 'DROGUE', color: '#f1c21b' },
+  { code: 7, label: 'DEPLOY', shortLabel: 'DEPLOY', color: '#24a148' },
+  { code: 8, label: 'GROUND', shortLabel: 'GROUND', color: '#24a148' },
+  { code: 9, label: 'FAULT', shortLabel: 'FAULT', color: '#fa4d56' },
+];
+function getFlightStateMeta(state) {
+  return FLIGHT_STATES[state] || { code: state, label: `UNKNOWN (${state})`, shortLabel: 'UNKNOWN', color: '#8d8d8d' };
+}
 function getPhase(t, alt, accel, row={}) {
   if ((row.source || '').startsWith('hardware') && !window._ejectForced) {
-    return Number.isInteger(row.phase) ? row.phase : 0;
+    const stateCode = Number(row.state_code ?? row.phase);
+    return Number.isInteger(stateCode) && stateCode >= 0 && stateCode <= 9 ? stateCode : 1;
   }
   if (!window._ejectForced) {
-    if (t < 0.5)              return 0; // Pad
-    if (t <= 2.41)            return 1; // Boost
-    if (t <= 10.11)           return 2; // Coast
-    if (t <= 25.23)           return 3; // Descent (drogue)
-    if (t <= 43 && alt > 0)   return 3; // Descent (main chute)
-    return 4;                           // Recovery
+    if (t < 0.5)              return 1; // Safe
+    if (t < 1.0)              return 2; // Armed
+    if (t <= 2.41)            return 3; // Launch
+    if (t <= 10.11)           return 4; // Coast
+    if (t <= 11.14)           return 5; // Apogee
+    if (t <= 25.23)           return 6; // Drogue descent
+    if (t <= 43 && alt > 0)   return 7; // Main deploy / recovery descent
+    return 8;                           // Ground
   }
-  return 3; // 강제 사출 시 항상 Descent
+  return 7; // 강제 사출 시 Deploy
 }
 function setPhaseUI(phase) {
   if(phase === currentPhase) return;
   currentPhase = phase;
-  set('phase-name', PHASES[phase]);
-  for(let i=0;i<5;i++) {
+  const meta = getFlightStateMeta(phase);
+  set('phase-name', meta.label);
+  const phaseName = document.getElementById('phase-name');
+  if (phaseName) phaseName.style.color = meta.color;
+  for(let i=0;i<FLIGHT_STATES.length;i++) {
     const seg = document.getElementById('ph-'+i);
     const lbl = document.getElementById('phl-'+i);
     if(!seg) continue;
-    seg.className = 'phase-seg' + (i < phase ? ' done-phase' : i === phase ? ' active-phase' : '');
-    lbl.className = 'phase-lbl' + (i === phase ? ' active-phase' : '');
+    const isFault = phase === 9 && i === 9;
+    seg.className = 'phase-seg' + (isFault ? ' fault-phase' : i < phase ? ' done-phase' : i === phase ? ' active-phase' : '');
+    seg.style.background = i === phase && !isFault ? meta.color : '';
+    if (lbl) {
+      lbl.className = 'phase-lbl' + (isFault ? ' fault-phase' : i === phase ? ' active-phase' : '');
+      lbl.style.color = i === phase && !isFault ? meta.color : '';
+    }
   }
 }
 
@@ -2202,9 +2251,11 @@ function toggleStream() {
     document.getElementById('gps-lock-tag').textContent = 'GPS —';
 
     streamInterval = setInterval(async () => {
+      if (streamFetchInFlight) return;
+      streamFetchInFlight = true;
       let p;
       try {
-        const resp = await fetch('/api/telemetry/next');
+        const resp = await fetch('/api/telemetry/next', { cache: 'no-store' });
         if (!resp.ok) throw new Error('telemetry backend unavailable');
         p = await resp.json();
       } catch (err) {
@@ -2216,6 +2267,8 @@ function toggleStream() {
         btn.className = 'cds--btn cds--btn--primary';
         showToast('Telemetry Offline', 'Hardware telemetry backend is not connected.', true);
         return;
+      } finally {
+        streamFetchInFlight = false;
       }
       if (p.source === 'hardware_waiting') {
         tag.className = 'cds--tag cds--tag--yellow';
@@ -2237,10 +2290,11 @@ function toggleStream() {
         btn.className = 'cds--btn cds--btn--primary';
         showToast('Mission Complete', 'Rocket has landed. Ready for recovery.', false);
       }
-    }, 200);
+    }, 75);
 
   } else {
     isStreaming = false;
+    streamFetchInFlight = false;
     clearInterval(streamInterval);
     btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg> CONNECT';
     btn.className = 'cds--btn cds--btn--primary';
