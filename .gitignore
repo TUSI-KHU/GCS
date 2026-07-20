@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 logs/flight_log_*.csv
+logs/hardware_log_*.csv
+logs/flight_log_integrated_*.csv
 
 # PlatformIO build outputs and downloaded libraries
 **/.pio/
+
+# Integrity-pinned browser libraries cached by tools/prepare_web_assets.py
+/static/vendor/

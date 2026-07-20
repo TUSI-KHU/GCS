@@ -5,14 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NURA 2025 — Mission Control</title>
 
-<!-- IBM Plex Fonts -->
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-<!-- Leaflet -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<!-- Local, integrity-pinned browser assets (tools/prepare_web_assets.py) -->
+<link rel="stylesheet" href="/static/vendor/leaflet.css"/>
 
 <!-- Chart.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="/static/vendor/chart.umd.js"></script>
 
 <style>
 /* ─────────────── IBM Carbon Design Tokens ─────────────── */
@@ -846,6 +843,10 @@ body {
           <div class="metric-label">Bearing</div>
           <div class="metric-value"><span id="v-bearing">—</span><span class="metric-unit">°</span></div>
         </div>
+        <div class="metric-cell highlight">
+          <div class="metric-label">Battery</div>
+          <div class="metric-value"><span id="v-batt">—</span><span class="metric-unit">V</span></div>
+        </div>
       </div>
 
       <!-- Velocity bar -->
@@ -1148,7 +1149,7 @@ body {
 </div>
 
 <!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/vendor/leaflet.js"></script>
 
 <script>
 // ─────────────────────────────────────────────
@@ -1167,9 +1168,12 @@ let stats = { maxAlt: 0, maxSpd: 0, totalDist: 0, points: 0 };
 let lastPos        = null;
 let prevAlt        = 0;
 let prevTs         = null;
+let lastVvel       = 0;
+let lastHardwarePacketId = null;
+let lastGpsCount   = 0;
 let currentPhase   = 0;
 
-const flightData = { ts:[], alt:[], accel:[], lat:[], lng:[], pitch:[], roll:[], vvel:[], yaw:[] };
+const flightData = { ts:[], alt:[], gpsAlt:[], accel:[], lat:[], lng:[], pitch:[], roll:[], vvel:[], yaw:[] };
 
 // ─── Chart Scroll State ───────────────────────
 // 각 탭별 스크롤 상태: viewOffset = 뷰의 시작 인덱스, liveMode = 항상 최신 보기
@@ -1375,7 +1379,7 @@ const TAB_CHART_KEYS = {
 
 // 차트 key → flightData key 매핑
 const CHART_DATA_KEY = {
-  lat: 'lat', lng: 'lng', galt: 'alt',
+  lat: 'lat', lng: 'lng', galt: 'gpsAlt',
   alt: 'alt', vvel: 'vvel',
   accel: 'accel', pitch: 'pitch', roll: 'roll', yaw: 'yaw',
 };
@@ -1911,14 +1915,20 @@ function updateUI(row) {
   const pitch = parseFloat(row.pitch);
   const roll  = parseFloat(row.roll);
   const accel = parseFloat(row.accel);
+  const isHardware = (row.source || '').startsWith('hardware');
+  const gpsAltValue = Number.parseFloat(row.gps_alt_m);
+  const gpsAlt = Number.isFinite(gpsAltValue) ? gpsAltValue : alt;
   const dt = Number.isFinite(prevTs) && Number.isFinite(t) && t > prevTs ? Math.max(0.001, t - prevTs) : null;
-  const vvel  = dt ? (alt - prevAlt) / dt : 0;
-  prevAlt = alt;
-  prevTs = t;
+  const isNewTimedSample = !isHardware || !Number.isFinite(prevTs) || (Number.isFinite(t) && t > prevTs);
+  const vvel = dt ? (alt - prevAlt) / dt : lastVvel;
+  if (isNewTimedSample) {
+    prevAlt = alt;
+    prevTs = t;
+    lastVvel = vvel;
+  }
 
   const vel = Math.abs(vvel);
   const phase = getPhase(t, alt, accel, row);
-  const isHardware = (row.source || '').startsWith('hardware');
   const yawValue = isHardware && Number.isFinite(parseFloat(row.yaw_rate_dps))
     ? parseFloat(row.yaw_rate_dps)
     : (Number.isFinite(parseFloat(row.yaw)) ? parseFloat(row.yaw) : (roll * 0.3 + pitch * 0.1));
@@ -1933,6 +1943,8 @@ function updateUI(row) {
   set('v-vel',   vel.toFixed(1));
   set('v-lat',   lat.toFixed(6));
   set('v-lng',   lng.toFixed(6));
+  const battMv = Number(row.batt_mv);
+  set('v-batt', Number.isFinite(battMv) && battMv > 0 ? (battMv / 1000).toFixed(2) : '—');
   set('hud-lat', lat.toFixed(6));
   set('hud-lng', lng.toFixed(6));
   set('hud-alt', alt.toFixed(1));
@@ -1951,12 +1963,18 @@ function updateUI(row) {
   set('hud-dist', dist.toFixed(0));
 
   // ─ Stats ─
-  if(alt > maxAlt) { maxAlt = alt; set('stat-maxalt', maxAlt.toFixed(1)+' m'); }
-  if(vel > maxSpd) { maxSpd = vel; set('stat-maxspd', maxSpd.toFixed(1)+' m/s'); }
+  if(isNewTimedSample && alt > maxAlt) { maxAlt = alt; set('stat-maxalt', maxAlt.toFixed(1)+' m'); }
+  if(isNewTimedSample && vel > maxSpd) { maxSpd = vel; set('stat-maxspd', maxSpd.toFixed(1)+' m/s'); }
   totalDist += lastPos ? haversine(lastPos[0], lastPos[1], lat, lng) : 0;
   lastPos = [lat, lng];
   set('stat-dist', totalDist.toFixed(0)+' m');
-  set('stat-pts', ++stats.points);
+  if (!isHardware) {
+    stats.points += 1;
+  } else if (Number(row.gps_count) > lastGpsCount) {
+    stats.points += Number(row.gps_count) - lastGpsCount;
+    lastGpsCount = Number(row.gps_count);
+  }
+  set('stat-pts', stats.points);
 
   // ─ Velocity bar ─
   const velPct = Math.min(100, (vel / 200) * 100);
@@ -2001,19 +2019,22 @@ function updateUI(row) {
   const yawTitle = document.querySelector('#wrap-yaw')?.parentElement?.querySelector('.chart-section-title');
   if (yawTitle) yawTitle.innerHTML = `<span style="color:#be95ff;">●</span> ${yawLabel}`;
 
-  // flightData에 모든 데이터 누적
-  flightData.ts.push(lbl);
-  flightData.alt.push(alt);
-  flightData.lat.push(lat);
-  flightData.lng.push(lng);
-  flightData.pitch.push(pitch);
-  flightData.roll.push(roll);
-  flightData.accel.push(accel);
-  flightData.vvel.push(vvel);
-  flightData.yaw.push(yaw);
-  // MAX_HISTORY 초과 시 앞에서 제거
-  if (flightData.ts.length > MAX_HISTORY) {
-    Object.keys(flightData).forEach(k => flightData[k].shift());
+  // FAST의 boot_ms가 진행된 경우만 시계열에 추가한다. GPS 패킷과 HTTP
+  // 재폴링이 같은 FAST 표본을 중복 삽입하지 않게 한다.
+  if (isNewTimedSample) {
+    flightData.ts.push(lbl);
+    flightData.alt.push(alt);
+    flightData.gpsAlt.push(gpsAlt);
+    flightData.lat.push(lat);
+    flightData.lng.push(lng);
+    flightData.pitch.push(pitch);
+    flightData.roll.push(roll);
+    flightData.accel.push(accel);
+    flightData.vvel.push(vvel);
+    flightData.yaw.push(yaw);
+    if (flightData.ts.length > MAX_HISTORY) {
+      Object.keys(flightData).forEach(k => flightData[k].shift());
+    }
   }
 
   // 현재 활성 탭 차트를 뷰포트 기반으로 렌더
@@ -2022,7 +2043,7 @@ function updateUI(row) {
   // Current values in chart headers
   set('cur-lat',   lat.toFixed(6));
   set('cur-lng',   lng.toFixed(6));
-  set('cur-galt',  alt.toFixed(1));
+  set('cur-galt',  gpsAlt.toFixed(1));
   set('cur-alt2',  alt.toFixed(1));
   set('cur-vvel',  vvel.toFixed(1));
   set('cur-accel', accel.toFixed(2));
@@ -2270,16 +2291,36 @@ function toggleStream() {
       } finally {
         streamFetchInFlight = false;
       }
+      const isHardware = (p.source || '').startsWith('hardware');
+      const packetId = Number(p.packet_id);
+      const isNewHardwarePacket = !isHardware || !Number.isFinite(packetId) || packetId !== lastHardwarePacketId;
+      const radioState = p.receiver_status && p.receiver_status.radio;
+      if (radioState === 'failed') {
+        tag.className = 'cds--tag cds--tag--red';
+        tag.textContent = 'RADIO INIT FAIL';
+        return;
+      }
       if (p.source === 'hardware_waiting') {
         tag.className = 'cds--tag cds--tag--yellow';
-        tag.textContent = 'WAITING PACKET';
-        updateUI(p);
+        const age = Number(p.last_packet_age_s);
+        tag.textContent = Number.isFinite(age) ? `WAITING PACKET ${age.toFixed(1)}s` : 'WAITING PACKET';
+        if (isNewHardwarePacket) {
+          lastHardwarePacketId = packetId;
+          updateUI(p);
+        }
         return;
       }
       if (p.source === 'hardware_disconnected') {
         tag.className = 'cds--tag cds--tag--red';
         tag.textContent = 'SERIAL WAIT';
         return;
+      }
+      if (isHardware) {
+        tag.className = 'cds--tag cds--tag--live';
+        const gaps = Number(p.sequence_gaps) || 0;
+        tag.textContent = `● LIVE F:${Number(p.fast_count)||0} G:${Number(p.gps_count)||0} DROP:${gaps}`;
+        if (!isNewHardwarePacket) return;
+        lastHardwarePacketId = packetId;
       }
       updateUI(p);
       if(p.source === 'simulate' && p.alt <= 0 && p.ts > 30) {
@@ -2427,13 +2468,25 @@ function hideToast() {
 // ─────────────────────────────────────────────
 //  낙하산 강제 사출
 // ─────────────────────────────────────────────
-function openEjectModal() {
+async function openEjectModal() {
   document.getElementById('eject-status-line').textContent = '';
   document.getElementById('eject-confirm-btn').disabled = false;
   document.getElementById('eject-confirm-btn').textContent = '예 — 사출 실행';
   document.getElementById('eject-confirm-btn').style.opacity = '1';
   const overlay = document.getElementById('eject-modal-overlay');
   overlay.style.display = 'flex';
+  try {
+    const response = await fetch('/api/pyro/status', { cache: 'no-store' });
+    const status = await response.json();
+    if (status.simulate !== true && status.avionics_downlink_only === true) {
+      document.getElementById('eject-status-line').textContent =
+        'BLOCKED: avionics kFlightDownlinkOnly=true';
+      document.getElementById('eject-confirm-btn').disabled = true;
+      document.getElementById('eject-confirm-btn').style.opacity = '0.45';
+    }
+  } catch (_) {
+    // confirmEject still performs the server-side connection/safety check.
+  }
 }
 
 function closeEjectModal() {

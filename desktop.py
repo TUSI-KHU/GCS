@@ -306,6 +306,8 @@ if __name__ == "__main__":
     parser.add_argument("--serial-port", default=None, help="Teensy serial port")
     parser.add_argument("--simulate", action="store_true", help="Run without hardware")
     args, qt_args = parser.parse_known_args()
+    if not args.simulate and not args.serial_port:
+        parser.error("--serial-port is required unless --simulate is used")
 
     uplink = None
     uplink_error = None

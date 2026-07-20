@@ -368,34 +368,80 @@ class ParsedFrame:
     payload: bytes
 
 
+@dataclass
+class GpsTelemetry:
+    latitude_deg: float
+    longitude_deg: float
+    altitude_m: float
+    speed_mps: float
+    course_deg: float
+    hdop: float
+    satellites: int
+    fix_flags: int
+    age_s: float
+
+    @property
+    def has_fix(self) -> bool:
+        return bool(self.fix_flags & 0x02)
+
+
+def decode_gps_payload(payload: bytes) -> GpsTelemetry:
+    """Decode the complete 18-byte C++ GpsTelemetry payload."""
+    if len(payload) != GPS_PAYLOAD_LEN:
+        raise ValueError(f"GPS payload length must be {GPS_PAYLOAD_LEN}, got {len(payload)}")
+    return GpsTelemetry(
+        latitude_deg=int.from_bytes(payload[0:4], "little", signed=True) / 10_000_000.0,
+        longitude_deg=int.from_bytes(payload[4:8], "little", signed=True) / 10_000_000.0,
+        altitude_m=int.from_bytes(payload[8:10], "little", signed=True) / 10.0,
+        speed_mps=int.from_bytes(payload[10:12], "little") / 100.0,
+        course_deg=int.from_bytes(payload[12:14], "little") / 100.0,
+        hdop=payload[14] / 10.0,
+        satellites=payload[15],
+        fix_flags=payload[16],
+        age_s=payload[17] / 10.0,
+    )
+
+
 def decode_frame(frame: bytes, *, vehicle_id: int = VEHICLE_ID,
                  direction: int = FRAME_DIRECTION_DOWNLINK,
                  key: bytes = AUTH_KEY) -> ParsedFrame | None:
+    parsed, _reason = decode_frame_diagnostic(
+        frame, vehicle_id=vehicle_id, direction=direction, key=key
+    )
+    return parsed
+
+
+def decode_frame_diagnostic(frame: bytes, *, vehicle_id: int = VEHICLE_ID,
+                            direction: int = FRAME_DIRECTION_DOWNLINK,
+                            key: bytes = AUTH_KEY) -> tuple[ParsedFrame | None, str | None]:
+    """Decode one frame and return a stable reject reason for diagnostics."""
     if len(frame) < FRAME_OVERHEAD or frame[0:2] != bytes([SYNC0, SYNC1]):
-        return None
+        return None, "sync_or_short"
     ver_type = frame[2]
     msg_type = frame_type(ver_type)
     payload_len = payload_length_for_type(msg_type)
-    if frame_version(ver_type) != VERSION or payload_len == 0:
-        return None
+    if frame_version(ver_type) != VERSION:
+        return None, "version"
+    if payload_len == 0:
+        return None, "message_type"
     if len(frame) != FRAME_OVERHEAD + payload_len:
-        return None
+        return None, "length"
     received_vehicle_id = int.from_bytes(frame[3:7], "little")
     if received_vehicle_id != vehicle_id:
-        return None
+        return None, "vehicle_id"
     received_crc = int.from_bytes(frame[-FRAME_CRC_LEN:], "little")
     if received_crc != crc16_ccitt_false(frame[2:-FRAME_CRC_LEN]):
-        return None
+        return None, "crc"
     tag_offset = FRAME_HEADER_LEN + payload_len
     expected_tag = _frame_auth_tag(frame, payload_len, direction, key)
     if expected_tag != frame[tag_offset:tag_offset + FRAME_AUTH_TAG_LEN]:
-        return None
+        return None, "auth"
     return ParsedFrame(
         msg_type=msg_type,
         vehicle_id=received_vehicle_id,
         seq=int.from_bytes(frame[7:9], "little"),
         payload=bytes(frame[FRAME_HEADER_LEN:tag_offset]),
-    )
+    ), None
 
 
 class FrameParser:
@@ -409,17 +455,45 @@ class FrameParser:
         self.vehicle_id = vehicle_id
         self.direction = direction
         self.key = key
+        self.reset_stats()
         self.reset()
 
     def reset(self):
         self._buf = bytearray()
         self._expected_len = 0
 
+    def reset_stats(self):
+        self.bytes_received = 0
+        self.sync_candidates = 0
+        self.frame_candidates = 0
+        self.frames_ok = 0
+        self.reject_counts = {
+            "header": 0,
+            "sync_or_short": 0,
+            "version": 0,
+            "message_type": 0,
+            "length": 0,
+            "vehicle_id": 0,
+            "crc": 0,
+            "auth": 0,
+            "oversize": 0,
+        }
+
+    def stats(self) -> dict:
+        return {
+            "bytes_received": self.bytes_received,
+            "sync_candidates": self.sync_candidates,
+            "frame_candidates": self.frame_candidates,
+            "frames_ok": self.frames_ok,
+            "reject_counts": dict(self.reject_counts),
+        }
+
     def feed(self, byte: int):
         b = byte & 0xFF
         if not self._buf:
             if b == SYNC0:
                 self._buf.append(b)
+                self.sync_candidates += 1
             return None
         if len(self._buf) == 1:
             if b == SYNC1:
@@ -432,6 +506,7 @@ class FrameParser:
         if len(self._buf) == 3:
             payload_len = payload_length_for_type(frame_type(b))
             if frame_version(b) != VERSION or payload_len == 0:
+                self.reject_counts["header"] += 1
                 self.reset()
                 return None
             self._expected_len = FRAME_OVERHEAD + payload_len
@@ -439,16 +514,26 @@ class FrameParser:
         if self._expected_len and len(self._buf) == self._expected_len:
             raw = bytes(self._buf)
             self.reset()
-            return decode_frame(raw,
-                                vehicle_id=self.vehicle_id,
-                                direction=self.direction,
-                                key=self.key)
+            self.frame_candidates += 1
+            parsed, reason = decode_frame_diagnostic(
+                raw,
+                vehicle_id=self.vehicle_id,
+                direction=self.direction,
+                key=self.key,
+            )
+            if parsed is not None:
+                self.frames_ok += 1
+            elif reason is not None:
+                self.reject_counts[reason] = self.reject_counts.get(reason, 0) + 1
+            return parsed
         if len(self._buf) > MAX_FRAME_LEN:
+            self.reject_counts["oversize"] += 1
             self.reset()
         return None
 
     def feed_bytes(self, data: bytes):
         """여러 바이트를 한 번에 먹이고, 완성된 프레임들을 리스트로 반환."""
+        self.bytes_received += len(data)
         frames = []
         for byte in data:
             frame = self.feed(byte)

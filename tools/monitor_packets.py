@@ -15,9 +15,8 @@ from pathlib import Path
 
 try:
     import serial
-    from serial.tools import list_ports
 except ImportError as exc:
-    raise SystemExit("pyserial is required: python3 -m pip install pyserial") from exc
+    raise SystemExit("pyserial is required (Ubuntu: sudo apt install python3-serial)") from exc
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -32,17 +31,6 @@ TYPE_NAMES = {
 }
 
 
-def find_teensy_port() -> str | None:
-    for port in list_ports.comports():
-        haystack = " ".join(
-            str(value or "")
-            for value in (port.device, port.description, port.manufacturer, port.hwid)
-        ).lower()
-        if "teensy" in haystack or "16c0:0483" in haystack:
-            return port.device
-    return None
-
-
 def printable_preview(data: bytes, limit: int = 64) -> str:
     preview = data[:limit]
     return " ".join(f"{byte:02X}" for byte in preview)
@@ -54,7 +42,11 @@ def type_name(msg_type: int) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Monitor NURA GCS serial packets")
-    parser.add_argument("--port", help="Serial port, e.g. /dev/ttyACM0")
+    parser.add_argument("--port", required=True, help="Ground Teensy port, e.g. /dev/ttyACM1")
+    parser.add_argument(
+        "--serial-mode", choices=("raw", "text"), default="raw",
+        help="raw bridge frames (default) or legacy receiver text output",
+    )
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--report-interval", type=float, default=1.0)
     parser.add_argument("--read-size", type=int, default=512)
@@ -63,7 +55,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print a hex preview for every non-empty serial read",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.report_interval <= 0:
+        parser.error("--report-interval must be positive")
+    if args.read_size <= 0:
+        parser.error("--read-size must be positive")
+    return args
 
 
 def main() -> int:
@@ -79,6 +76,7 @@ def main() -> int:
     parsed_total = 0
     counts = {p.MESSAGE_FAST_TLM: 0, p.MESSAGE_GPS_TLM: 0, p.MESSAGE_CONTROL: 0}
     line_buffer = bytearray()
+    diagnostic_buffer = bytearray()
     latest = "none"
     last_byte_at: float | None = None
     last_report = time.monotonic()
@@ -88,11 +86,7 @@ def main() -> int:
 
     try:
         while True:
-            port = args.port or find_teensy_port()
-            if port is None:
-                print("[reconnect] no Teensy serial port found; retrying in 1s", flush=True)
-                time.sleep(1.0)
-                continue
+            port = args.port
 
             print(f"[open] port={port} baud={args.baud}", flush=True)
             try:
@@ -101,6 +95,10 @@ def main() -> int:
                     time.sleep(0.3)
                     parser.reset()
                     line_buffer.clear()
+                    diagnostic_buffer.clear()
+                    if args.serial_mode == "raw":
+                        ser.write(b"NURA_STATUS\n")
+                        ser.flush()
 
                     while True:
                         now = time.monotonic()
@@ -120,38 +118,68 @@ def main() -> int:
                             if args.show_raw:
                                 print(f"[raw] +{len(chunk)} bytes hex={printable_preview(chunk)}")
 
-                            frames = parser.feed_bytes(chunk)
-                            for frame in frames:
-                                parsed_total += 1
-                                counts[frame.msg_type] = counts.get(frame.msg_type, 0) + 1
-                                latest = (
-                                    f"type={type_name(frame.msg_type)} seq={frame.seq} "
-                                    f"payload_len={len(frame.payload)} "
-                                    f"payload={printable_preview(frame.payload, 32)}"
-                                )
-                                print(f"[packet] {latest}")
+                            if args.serial_mode == "raw":
+                                frames = parser.feed_bytes(chunk)
+                                for frame in frames:
+                                    parsed_total += 1
+                                    counts[frame.msg_type] = counts.get(frame.msg_type, 0) + 1
+                                    latest = (
+                                        f"type={type_name(frame.msg_type)} seq={frame.seq} "
+                                        f"payload_len={len(frame.payload)} "
+                                        f"payload={printable_preview(frame.payload, 32)}"
+                                    )
+                                    print(f"[packet] {latest}")
 
-                            line_buffer.extend(chunk)
-                            while b"\n" in line_buffer:
-                                raw_line, _, rest = line_buffer.partition(b"\n")
-                                line_buffer = bytearray(rest)
-                                text = raw_line.rstrip(b"\r").decode("utf-8", "replace").strip()
-                                if text:
+                                for byte in chunk:
+                                    if byte == 0x0A:
+                                        text = diagnostic_buffer.rstrip(b"\r").decode("ascii", "ignore").strip()
+                                        diagnostic_buffer.clear()
+                                        if text.startswith("NURA_BRIDGE "):
+                                            latest = f"bridge={text}"
+                                            print(f"[bridge] {text}")
+                                    elif byte == 0x0D or 0x20 <= byte <= 0x7E:
+                                        if len(diagnostic_buffer) < 512:
+                                            diagnostic_buffer.append(byte)
+                                        else:
+                                            diagnostic_buffer.clear()
+                                    else:
+                                        diagnostic_buffer.clear()
+                            else:
+                                line_buffer.extend(chunk)
+                                while b"\n" in line_buffer:
+                                    raw_line, _, rest = line_buffer.partition(b"\n")
+                                    line_buffer = bytearray(rest)
+                                    text = raw_line.rstrip(b"\r").decode("utf-8", "replace").strip()
+                                    if not text:
+                                        continue
+                                    for msg_type, prefix in (
+                                        (p.MESSAGE_FAST_TLM, "rx type=FAST "),
+                                        (p.MESSAGE_GPS_TLM, "rx type=GPS "),
+                                        (p.MESSAGE_CONTROL, "rx type=CONTROL "),
+                                    ):
+                                        if text.startswith(prefix):
+                                            parsed_total += 1
+                                            counts[msg_type] = counts.get(msg_type, 0) + 1
+                                            break
                                     latest = f"line={text}"
                                     print(f"[line] {text}")
-
-                            if len(line_buffer) > 2048:
-                                line_buffer.clear()
+                                if len(line_buffer) > 4096:
+                                    line_buffer.clear()
 
                         if now - last_report >= args.report_interval:
+                            if args.serial_mode == "raw":
+                                ser.write(b"NURA_STATUS\n")
+                                ser.flush()
                             elapsed = now - start
                             last_age = "never" if last_byte_at is None else f"{now - last_byte_at:.1f}s"
+                            parser_rejects = sum(parser.stats()["reject_counts"].values())
                             print(
                                 "[status] "
-                                f"elapsed={elapsed:.0f}s raw={raw_total} sync={sync_total} "
+                                f"mode={args.serial_mode} elapsed={elapsed:.0f}s raw={raw_total} sync={sync_total} "
                                 f"parsed={parsed_total} fast={counts.get(p.MESSAGE_FAST_TLM, 0)} "
                                 f"gps={counts.get(p.MESSAGE_GPS_TLM, 0)} "
                                 f"control={counts.get(p.MESSAGE_CONTROL, 0)} "
+                                f"frame_rejects={parser_rejects} "
                                 f"last_byte_age={last_age} latest={latest}",
                                 flush=True,
                             )

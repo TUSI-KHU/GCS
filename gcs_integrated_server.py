@@ -129,13 +129,14 @@ def install_battery_integration(legacy) -> None:
 
     original_binary_fast = legacy.HardwareTelemetry._apply_fast
 
-    def apply_fast_with_battery(self, seq: int, payload: bytes) -> None:
-        original_binary_fast(self, seq, payload)
+    def apply_fast_with_battery(self, seq: int, payload: bytes) -> bool:
+        applied = original_binary_fast(self, seq, payload)
         if self.latest is not None and len(payload) >= 22:
             # FAST payload is 22 bytes; bytes 20..21 are the natural u16 slot
             # for battery millivolts in the current Python/C++ layout.
             self.latest["batt_mv"] = int.from_bytes(payload[20:22], "little", signed=False)
             _normalize_battery(self.latest)
+        return applied
 
     legacy.HardwareTelemetry._apply_fast = apply_fast_with_battery
 
@@ -209,20 +210,33 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="NURA non-invasive integrated Flask server")
     parser.add_argument("--gcs-root", default=os.path.dirname(os.path.abspath(__file__)))
     parser.add_argument("--serial-port", default=None)
+    parser.add_argument("--serial-mode", choices=("raw", "text"), default="raw")
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--http-port", type=int, default=8080)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
+    if not args.simulate and not args.serial_port:
+        parser.error("--serial-port is required unless --simulate is used")
+    if not 1 <= args.http_port <= 65535:
+        parser.error("--http-port must be between 1 and 65535")
 
     legacy, PyroUplink = _import_legacy(args.gcs_root)
     install_battery_integration(legacy)
 
-    legacy.uplink = PyroUplink(port=args.serial_port, simulate=args.simulate)
+    legacy.uplink = PyroUplink(
+        port=args.serial_port,
+        simulate=args.simulate,
+        serial_mode=args.serial_mode,
+    )
     try:
         legacy.uplink.open()
     except RuntimeError as exc:
-        print(f"[WARN] uplink connection failed: {exc}", file=sys.stderr)
+        print(f"[ERROR] uplink connection failed: {exc}", file=sys.stderr)
+        return 2
+    if not args.simulate:
+        legacy.hardware_telemetry.start_logging()
+        legacy.hardware_reader.start(legacy.uplink)
 
     url = f"http://{args.host}:{args.http_port}/"
     print(f"[NURA] Integrated server started: {url}")
@@ -230,7 +244,13 @@ def main() -> int:
     print(f"[NURA] CSV log: {legacy.telemetry.logger.path}")
     if not args.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    legacy.app.run(host=args.host, port=args.http_port, threaded=True)
+    try:
+        legacy.app.run(host=args.host, port=args.http_port, threaded=True)
+    finally:
+        legacy.hardware_reader.stop()
+        legacy.hardware_telemetry.close_logging()
+        legacy.telemetry.close()
+        legacy.uplink.close()
     return 0
 
 

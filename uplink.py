@@ -16,7 +16,7 @@ nura/uplink.py
         |  raw nura 프레임 바이트
         v
    Teensy "LoRa 시리얼 브리지" (firmware/lora_serial_bridge)
-        |  LoRa 433MHz 송신
+        |  LoRa 송신 (선택한 펌웨어 프로필의 주파수)
         v
    로켓 비행컴퓨터 (sender 펌웨어) ── COMMAND_FORCE_DEPLOY_RECOVERY 수신
         |  deployFired = true  → 낙하산 사출!
@@ -33,6 +33,7 @@ nura/uplink.py
 """
 
 from __future__ import annotations
+from collections import deque
 import time
 import threading
 
@@ -44,31 +45,15 @@ except ImportError:
 # pyserial 은 선택 의존성. 없으면 시뮬레이션 모드만 사용 가능.
 try:
     import serial            # type: ignore
-    from serial.tools import list_ports  # type: ignore
     _HAS_SERIAL = True
 except ImportError:  # pragma: no cover
     serial = None
-    list_ports = None
     _HAS_SERIAL = False
 
 # receiver/src/main.cpp 의 상수와 동일
 COMMAND_RETRY_INTERVAL_S = 0.25     # kCommandRetryIntervalMs = 250
 COMMAND_MAX_ATTEMPTS = 8            # kCommandMaxAttempts = 8
 SERIAL_BAUD = 115200                # kSerialBaud
-
-# Teensy USB 의 VID/PID (sensor_test/teensy_serial_watch.py 에서 가져옴)
-TEENSY_VID_PID = {(0x16C0, 0x0483), (0x16C0, 0x0478)}
-
-
-def find_teensy_port():
-    """연결된 Teensy 시리얼 포트를 자동으로 찾아줌. 없으면 None."""
-    if not _HAS_SERIAL:
-        return None
-    for port in list_ports.comports():
-        if (port.vid, port.pid) in TEENSY_VID_PID or "Teensy" in (port.description or ""):
-            return port.device
-    return None
-
 
 class DeployResult:
     """강제 사출 명령의 최종 결과."""
@@ -103,7 +88,7 @@ class PyroUplink:
     LoRa 강제 사출 업링크.
 
     사용 예:
-        up = PyroUplink(port="/dev/ttyACM0")   # port=None 이면 자동탐색
+        up = PyroUplink(port="/dev/ttyACM1", serial_mode="raw")
         up.open()
         result = up.force_deploy()
         print(result.to_dict())
@@ -115,12 +100,16 @@ class PyroUplink:
     def __init__(self, port: str | None = None, baud: int = SERIAL_BAUD,
                  auth_key: bytes = p.AUTH_KEY,
                  vehicle_id: int = p.VEHICLE_ID,
-                 simulate: bool = False):
+                 simulate: bool = False,
+                 serial_mode: str = "raw"):
+        if serial_mode not in {"raw", "text"}:
+            raise ValueError("serial_mode must be 'raw' or 'text'")
         self.port = port
         self.baud = baud
         self.auth_key = auth_key
         self.vehicle_id = vehicle_id
         self.simulate = simulate
+        self.serial_mode = serial_mode
         self._ser = None
         self._lock = threading.Lock()       # 동시 명령 방지
         # 시퀀스 카운터 (receiver 펌웨어의 nextCommandSeq / uplinkFrameSeq)
@@ -130,6 +119,12 @@ class PyroUplink:
                                      direction=p.FRAME_DIRECTION_DOWNLINK,
                                      key=auth_key)
         self._line_buffer = bytearray()
+        self._diagnostic_buffer = bytearray()
+        self._bridge_diagnostics: list[str] = []
+        self._bridge_status: dict[str, str] = {}
+        self._pending_frames = deque(maxlen=1024)
+        self._serial_errors = 0
+        self._last_status_request = 0.0
 
     # ── 연결 관리 ──────────────────────────────
     def open(self):
@@ -138,23 +133,33 @@ class PyroUplink:
             return
         if not _HAS_SERIAL:
             raise RuntimeError(
-                "pyserial 이 설치돼 있지 않음.  pip install pyserial  하거나 "
-                "simulate=True 로 실행해줘."
+                "선택한 Python에서 pyserial을 불러올 수 없음. Ubuntu의 python3-serial을 "
+                "사용하거나 requirements-web.txt를 가상환경에 설치해줘."
             )
-        if self.port is None:
-            self.port = find_teensy_port()
         if self.port is None:
             raise RuntimeError(
-                "Teensy 시리얼 포트를 못 찾음. USB 케이블 확인하거나 port 를 직접 지정해줘."
+                "Teensy 시리얼 포트가 지정되지 않음. --serial-port 또는 port를 반드시 지정해줘."
             )
+        if self._ser is not None:
+            self.close()
         try:
             self._ser = serial.Serial(self.port, self.baud, timeout=0.05)
-        except serial.SerialException as exc:
+            self._ser.dtr = True
+            self._parser.reset()
+            self._line_buffer.clear()
+            self._diagnostic_buffer.clear()
+            self._pending_frames.clear()
+            time.sleep(0.3)                 # Teensy 가 깨어날 시간
+            if self.serial_mode == "raw":
+                # 브리지는 이 ASCII 요청만 별도로 알아듣고 NURA_BRIDGE 한 줄로
+                # 응답한다. 프레임 파서는 ASCII를 안전하게 건너뛴다.
+                self._ser.write(b"NURA_STATUS\n")
+                self._ser.flush()
+        except (serial.SerialException, OSError) as exc:
+            if self._ser is not None:
+                self._ser.close()
             self._ser = None
             raise RuntimeError(f"시리얼 포트를 열 수 없음: {exc}") from exc
-        self._ser.dtr = True
-        time.sleep(0.3)                 # Teensy 가 깨어날 시간
-        self._ser.reset_input_buffer()
 
     def close(self):
         if self._ser is not None:
@@ -170,29 +175,92 @@ class PyroUplink:
         return frames
 
     def read_frames_and_lines(self, max_bytes: int = 1024):
-        """Read buffered binary frames and receiver text lines from the serial port."""
+        """Read one transport without interpreting the same bytes in two formats.
+
+        raw mode parses authenticated frames and only extracts NURA_BRIDGE
+        diagnostic lines. text mode parses receiver firmware lines only.
+        """
         if self.simulate or self._ser is None or not self._ser.is_open:
             return [], []
         with self._lock:
+            pending = list(self._pending_frames)
+            self._pending_frames.clear()
             try:
                 chunk = self._ser.read(max_bytes)
-            except serial.SerialException:
+            except (serial.SerialException, OSError):
+                self._serial_errors += 1
                 self.close()
-                return [], []
+                return pending, []
             if not chunk:
-                return [], []
-            frames = self._parser.feed_bytes(chunk)
-            lines = []
-            self._line_buffer.extend(chunk)
-            while b"\n" in self._line_buffer:
-                raw, _, rest = self._line_buffer.partition(b"\n")
-                self._line_buffer = bytearray(rest)
-                text = raw.rstrip(b"\r").decode("utf-8", "replace").strip()
-                if text:
+                return pending, []
+            if self.serial_mode == "raw":
+                frames = pending + self._parser.feed_bytes(chunk)
+                return frames, self._extract_bridge_diagnostics(chunk)
+            return [], self._extract_text_lines(chunk)
+
+    def _extract_text_lines(self, chunk: bytes) -> list[str]:
+        lines = []
+        self._line_buffer.extend(chunk)
+        while b"\n" in self._line_buffer:
+            raw, _, rest = self._line_buffer.partition(b"\n")
+            self._line_buffer = bytearray(rest)
+            text = raw.rstrip(b"\r").decode("utf-8", "replace").strip()
+            if text:
+                lines.append(text)
+        if len(self._line_buffer) > 4096:
+            self._line_buffer.clear()
+        return lines
+
+    def _extract_bridge_diagnostics(self, chunk: bytes) -> list[str]:
+        lines = []
+        for byte in chunk:
+            if byte == 0x0A:
+                text = self._diagnostic_buffer.rstrip(b"\r").decode("ascii", "ignore").strip()
+                self._diagnostic_buffer.clear()
+                if text.startswith("NURA_BRIDGE "):
                     lines.append(text)
-            if len(self._line_buffer) > 2048:
-                self._line_buffer.clear()
-            return frames, lines
+                    self._bridge_diagnostics.append(text)
+                    self._bridge_diagnostics = self._bridge_diagnostics[-20:]
+                    for token in text.split()[1:]:
+                        if "=" in token:
+                            key, value = token.split("=", 1)
+                            self._bridge_status[key] = value
+                continue
+            if byte == 0x0D or 0x20 <= byte <= 0x7E:
+                if len(self._diagnostic_buffer) < 512:
+                    self._diagnostic_buffer.append(byte)
+                else:
+                    self._diagnostic_buffer.clear()
+            else:
+                # Binary frame data must never become a receiver text line.
+                self._diagnostic_buffer.clear()
+        return lines
+
+    def diagnostics(self) -> dict:
+        return {
+            "serial_mode": self.serial_mode,
+            "serial_errors": self._serial_errors,
+            "parser": self._parser.stats(),
+            "bridge_status": dict(self._bridge_status),
+            "bridge_diagnostics": list(self._bridge_diagnostics),
+        }
+
+    def request_bridge_status(self, min_interval_s: float = 1.0) -> None:
+        if self.simulate or self.serial_mode != "raw" or not self.is_open():
+            return
+        now = time.monotonic()
+        if now - self._last_status_request < min_interval_s:
+            return
+        with self._lock:
+            if self._ser is None or not self._ser.is_open:
+                return
+            try:
+                self._ser.write(b"NURA_STATUS\n")
+                self._ser.flush()
+                self._last_status_request = now
+            except (serial.SerialException, OSError):
+                self._serial_errors += 1
+                self.close()
 
     # ── 시퀀스 번호 ────────────────────────────
     def _make_nonce(self, command_seq: int) -> int:
@@ -217,6 +285,14 @@ class PyroUplink:
 
         if not self.is_open():
             result.message = "시리얼 포트가 안 열려 있음. open() 먼저 호출해줘."
+            return result
+
+        if not self.simulate and self.serial_mode != "raw":
+            result.message = "텍스트 receiver 펌웨어에서는 PC PYRO 업링크를 지원하지 않음. raw bridge를 업로드해줘."
+            return result
+
+        if not self.simulate and self._bridge_status.get("radio") == "failed":
+            result.message = "지상국 LoRa 브리지의 radio 초기화가 실패해서 명령을 보내지 않음."
             return result
 
         command_seq = self._next_command_seq
@@ -245,7 +321,6 @@ class PyroUplink:
                                            nonce,
                                            self.auth_key,
                                            self.vehicle_id)
-        self._parser.reset()
 
         deadline = time.monotonic() + timeout_s
         last_tx = 0.0
@@ -257,16 +332,32 @@ class PyroUplink:
 
             # 재전송 타이밍 (250ms 마다, 최대 8회)
             if (now - last_tx) >= COMMAND_RETRY_INTERVAL_S and attempts < COMMAND_MAX_ATTEMPTS:
-                self._ser.write(frame)
-                self._ser.flush()
+                try:
+                    self._ser.write(frame)
+                    self._ser.flush()
+                except (serial.SerialException, OSError) as exc:
+                    self._serial_errors += 1
+                    self.close()
+                    result.message = f"명령 송신 중 시리얼 연결이 끊김: {exc}"
+                    return result
                 attempts += 1
                 last_tx = now
                 result.attempts = attempts
 
             # 시리얼에서 들어온 바이트 → 프레임 파싱
-            chunk = self._ser.read(256)
+            try:
+                chunk = self._ser.read(256)
+            except (serial.SerialException, OSError) as exc:
+                self._serial_errors += 1
+                self.close()
+                result.message = f"ACK 대기 중 시리얼 연결이 끊김: {exc}"
+                return result
             if chunk:
-                for parsed in self._parser.feed_bytes(chunk):
+                parsed_frames = self._parser.feed_bytes(chunk)
+                # ACK 처리 중 함께 들어온 FAST/GPS/CONTROL도 reader가
+                # 나중에 소비하도록 보존한다.
+                self._pending_frames.extend(parsed_frames)
+                for parsed in parsed_frames:
                     ack = self._handle_frame(parsed, command_seq, nonce)
                     if ack is None:
                         continue
