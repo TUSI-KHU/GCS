@@ -58,6 +58,7 @@ COMMAND_FORCE_DEPLOY_RECOVERY = 0x01
 COMMAND_ABORT_PROPULSION_DEPRECATED = 0x02   # 더 이상 지원 안 함(로켓이 REJECT 함)
 COMMAND_SET_TELEMETRY_PROFILE = 0x03
 COMMAND_BENCH_RESET_FSM = 0x7E
+CONTROL_PAIRING_MAGIC = 0x4E55  # "NU", authenticated in CONTROL param1.
 
 # AckStage  ── 로켓이 보내주는 ACK의 단계
 ACK_RECEIVED = 0
@@ -555,6 +556,7 @@ def build_force_deploy_frame(command_seq: int, frame_seq: int, nonce: int,
     sender 펌웨어(로켓)의 handleCommand() 가 검사하는 조건들:
       - SipHash 인증 태그 일치해야 함            → make_control_auth_tag 로 채움
       - param0 == 0 이어야 함 (0 아니면 사출 금지) → param0 = 0 고정
+      - param1 == CONTROL_PAIRING_MAGIC 이어야 함
       - command_seq/nonce 가 최근에 본 적 없어야 함 (중복 방지)
 
     이 조건을 만족하면 로켓은 ACK_ACCEPTED → deployFired=true → ACK_EXECUTED 순으로
@@ -567,7 +569,7 @@ def build_force_deploy_frame(command_seq: int, frame_seq: int, nonce: int,
         nonce=nonce,
         valid_until_ms=0,     # 0 = 만료 검사 안 함
         param0=0,             # ★ 반드시 0 (0이 아니면 로켓이 거부함)
-        param1=0,
+        param1=CONTROL_PAIRING_MAGIC,
     )
     control.auth_or_ack = make_control_auth_tag(control, frame_seq, key)
     payload = control.encode()
@@ -590,7 +592,7 @@ def build_bench_reset_fsm_frame(command_seq: int, frame_seq: int, nonce: int,
         nonce=nonce,
         valid_until_ms=0,
         param0=0,
-        param1=0,
+        param1=CONTROL_PAIRING_MAGIC,
     )
     control.auth_or_ack = make_control_auth_tag(control, frame_seq, key)
     payload = control.encode()
