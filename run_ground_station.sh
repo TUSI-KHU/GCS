@@ -84,6 +84,9 @@ TEENSY_TOOLS="$HOME/.platformio/packages/tool-teensy"
 PORTS_TOOL="$TEENSY_TOOLS/teensy_ports"
 REBOOT_TOOL="$TEENSY_TOOLS/teensy_reboot"
 LOADER_TOOL="$TEENSY_TOOLS/teensy_loader_cli"
+if [[ ! -x "$LOADER_TOOL" ]]; then
+    LOADER_TOOL="$(command -v teensy_loader_cli || true)"
+fi
 for tool in "$PORTS_TOOL" "$REBOOT_TOOL" "$LOADER_TOOL"; do
     [[ -x "$tool" ]] || die "required Teensy upload tool is missing: $tool"
 done
